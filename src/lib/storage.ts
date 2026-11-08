@@ -1,8 +1,8 @@
 import { AppSettings, AuditLogEntry, Permission, UserProfile, UserRole } from '../types/auth.types';
 import { Client, Partner, LandProperty, Subdivision, Block, Plot, PlotStatusHistory, PlotStatus } from '../types/land.types';
 import { Reservation, Sale, PaymentSchedule, Receipt, ThirdPartySettlement } from '../types/sales.types';
+import { ServiceType, ServiceCase, FinancingCase } from '../types/services.types';
 
-// Clés de stockage
 export const STORAGE_KEYS = {
   SETTINGS: 'bell_mms_app_settings',
   USERS: 'bell_mms_users',
@@ -22,6 +22,9 @@ export const STORAGE_KEYS = {
   PAYMENT_SCHEDULES: 'bell_mms_payment_schedules',
   RECEIPTS: 'bell_mms_receipts',
   THIRD_PARTY_SETTLEMENTS: 'bell_mms_third_party_settlements',
+  SERVICE_TYPES: 'bell_mms_service_types',
+  SERVICE_CASES: 'bell_mms_service_cases',
+  FINANCING_CASES: 'bell_mms_financing_cases',
 };
 
 export const DEFAULT_ROLES: UserRole[] = [
@@ -50,12 +53,13 @@ export const DEFAULT_PERMISSIONS: Permission[] = [
   { id: 'p16', code: 'clients:write', module: 'clients', name: 'Gérer les clients', description: 'Création et mise à jour' },
   { id: 'p17', code: 'services:read', module: 'services', name: 'Consulter les dossiers', description: 'Mutations et jugements' },
   { id: 'p18', code: 'services:write', module: 'services', name: 'Traiter les dossiers', description: 'Mettre à jour les étapes' },
-  { id: 'p19', code: 'finance:read', module: 'finance', name: 'Consulter la trésorerie', description: 'Soldes des caisses et comptes' },
-  { id: 'p20', code: 'finance:expense:request', module: 'finance', name: 'Demander une dépense', description: 'Soumettre une demande' },
-  { id: 'p21', code: 'finance:expense:approve', module: 'finance', name: 'Approuver les dépenses', description: 'Validation selon seuils' },
-  { id: 'p22', code: 'finance:cash:manage', module: 'finance', name: 'Gérer les caisses', description: 'Mouvements et clôtures' },
-  { id: 'p23', code: 'projects:manage', module: 'projects', name: 'Gérer les chantiers', description: 'Suivi travaux' },
-  { id: 'p24', code: 'tenders:manage', module: 'tenders', name: 'Gérer les marchés publics', description: 'Appels d\'offres et contrats' },
+  { id: 'p19', code: 'services:validate', module: 'services', name: 'Valider un dossier', description: 'Approbation finale direction' },
+  { id: 'p20', code: 'finance:read', module: 'finance', name: 'Consulter la trésorerie', description: 'Soldes des caisses et comptes' },
+  { id: 'p21', code: 'finance:expense:request', module: 'finance', name: 'Demander une dépense', description: 'Soumettre une demande' },
+  { id: 'p22', code: 'finance:expense:approve', module: 'finance', name: 'Approuver les dépenses', description: 'Validation selon seuils' },
+  { id: 'p23', code: 'finance:cash:manage', module: 'finance', name: 'Gérer les caisses', description: 'Mouvements et clôtures' },
+  { id: 'p24', code: 'projects:manage', module: 'projects', name: 'Gérer les chantiers', description: 'Suivi travaux' },
+  { id: 'p25', code: 'tenders:manage', module: 'tenders', name: 'Gérer les marchés publics', description: 'Appels d\'offres et contrats' },
 ];
 
 export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
@@ -136,83 +140,79 @@ export const INITIAL_PLOTS: Plot[] = [
   { id: 'plot-05', subdivision_id: 'sub-01', block_id: 'blk-02', plot_number: 'Lot B-07', area_sqm: 450, facade_m: 18, depth_m: 25, price_per_sqm: 30000, total_price: 13500000, status: 'bloquee', latitude: 4.0143, longitude: 9.8251, notes: 'Blocage administratif conservatoire temporaire.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 
-// DONNÉES DE VENTES ET RÉSERVATIONS RÉELLES
 export const INITIAL_RESERVATIONS: Reservation[] = [
-  {
-    id: 'res-01',
-    reference: 'RES-2026-004',
-    client_id: 'cli-01',
-    plot_id: 'plot-02',
-    agreed_price: 17500000,
-    deposit_amount: 2500000, // 2,5M FCFA versés
-    reservation_date: '2026-11-01',
-    duration_days: 14,
-    expiration_date: '2026-11-15',
-    status: 'active',
-    sales_rep_name: 'Emmanuel FOTSO',
-    conditions: 'Règlement du solde prévu par virement bancaire sous 14 jours.',
-    notes: 'Client sérieux, compromis en cours de préparation.',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
+  { id: 'res-01', reference: 'RES-2026-004', client_id: 'cli-01', plot_id: 'plot-02', agreed_price: 17500000, deposit_amount: 2500000, reservation_date: '2026-11-01', duration_days: 14, expiration_date: '2026-11-15', status: 'active', sales_rep_name: 'Emmanuel FOTSO', conditions: 'Règlement du solde prévu par virement bancaire sous 14 jours.', notes: 'Client sérieux, compromis en cours de préparation.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 
 export const INITIAL_SALES: Sale[] = [
+  { id: 'sale-01', reference: 'VTE-2026-001', client_id: 'cli-02', plot_id: 'plot-03', sale_type: 'comptant', sale_date: '2026-10-25', total_price: 18000000, discount_amount: 0, final_price: 18000000, initial_deposit: 18000000, remaining_balance: 0, payment_method: 'virement', status: 'soldee', sales_rep_name: 'Emmanuel FOTSO', validated_by_name: 'Paul BELL (DG)', validated_at: '2026-10-26T10:00:00Z', notes: 'Paiement intégral reçu sur compte UBA Cameroun.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+
+export const INITIAL_RECEIPTS: Receipt[] = [
+  { id: 'rec-01', reference: 'REC-2026-001', sale_id: 'sale-01', amount: 18000000, payment_date: '2026-10-25', payment_method: 'virement', transaction_ref: 'VIR-UBA-994821', received_by_name: 'Paul BELL', notes: 'Règlement intégral comptant.', created_at: new Date().toISOString() },
+];
+
+export const INITIAL_SETTLEMENTS: ThirdPartySettlement[] = [
+  { id: 'rev-01', reference: 'REV-2026-001', partner_id: 'par-01', partner_name: 'Famille EYANGO & Ayants-Droit', sale_id: 'sale-01', sale_reference: 'VTE-2026-001', plot_number: 'Lot B-05', total_sale_price: 18000000, owner_base_amount: 15840000, company_commission: 2160000, amount_paid_to_owner: 10000000, balance_due_to_owner: 5840000, status: 'partiellement_paye', settlement_date: '2026-10-28', payment_proof_ref: 'CHQ-BICEC-004812', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+
+// DONNÉES PHASE 4 : PRESTATIONS & FINANCEMENT
+export const INITIAL_SERVICE_TYPES: ServiceType[] = [
+  { id: 'st-01', code: 'mutation_totale', name: 'Mutation Foncière Totale', description: 'Transfert intégral de propriété d\'un titre foncier existant auprès de la Conservation Foncière', standard_fee: 750000, estimated_duration_days: 60, required_documents: ['Titre Foncier original', 'Acte de vente notarié', 'CNI des parties', 'Quittance droits d\'enregistrement'], is_active: true },
+  { id: 'st-02', code: 'mutation_partielle', name: 'Mutation Foncière Partielle (Morcellement)', description: 'Création d\'un nouveau titre foncier issu d\'un lotissement ou morcellement', standard_fee: 950000, estimated_duration_days: 90, required_documents: ['Plan de bornage visé par le Cadastre', 'Certificat de propriété récent', 'PV de bornage contradictoire', 'Acte de vente notarié'], is_active: true },
+  { id: 'st-03', code: 'jugement_heredite', name: 'Jugement d\'Hérédité & Déclaration de Succession', description: 'Régularisation successorale auprès du Tribunal de Première Instance', standard_fee: 500000, estimated_duration_days: 45, required_documents: ['Acte de décès du de cujus', 'Actes de naissance des ayants-droit', 'Certificat de mariage', 'Certificat de non-appel'], is_active: true },
+  { id: 'st-04', code: 'dossier_cadastre', name: 'Dossier Technique & Levé Cadastral', description: 'Bornage contradictoire et immatriculation au Cadastre', standard_fee: 400000, estimated_duration_days: 30, required_documents: ['Croquis géomètre', 'Accords des riverains', 'PV de bornage'], is_active: true },
+];
+
+export const INITIAL_SERVICE_CASES: ServiceCase[] = [
   {
-    id: 'sale-01',
-    reference: 'VTE-2026-001',
-    client_id: 'cli-02',
-    plot_id: 'plot-03',
-    sale_type: 'comptant',
-    sale_date: '2026-10-25',
-    total_price: 18000000,
-    discount_amount: 0,
-    final_price: 18000000,
-    initial_deposit: 18000000,
-    remaining_balance: 0,
-    payment_method: 'virement',
-    status: 'soldee',
-    sales_rep_name: 'Emmanuel FOTSO',
-    validated_by_name: 'Paul BELL (DG)',
-    validated_at: '2026-10-26T10:00:00Z',
-    notes: 'Paiement intégral reçu sur compte UBA Cameroun.',
+    id: 'case-01',
+    reference: 'MUT-2026-008',
+    client_id: 'cli-01',
+    service_type_id: 'st-01',
+    title: 'Mutation Foncière Titre Foncier TF 19402/Wouri - M. Kamdem',
+    description: 'Procédure de mutation suite à acquisition du terrain de Bonamoussadi.',
+    assigned_to_id: 'user-collab-01',
+    assigned_to_name: 'Emmanuel FOTSO',
+    opened_date: '2026-10-15',
+    target_date: '2026-12-15',
+    status: 'soumis_validation_dg',
+    fee_agreed: 750000,
+    expenses_estimated: 350000,
+    expenses_actual: 320000,
+    amount_paid: 500000,
+    dg_validation_status: 'en_attente',
+    steps: [
+      { id: 'step-1', case_id: 'case-01', step_order: 1, title: 'Collecte et vérification des pièces', status: 'termine', completed_by_name: 'Chantal NGO', completed_at: '2026-10-18T10:00:00Z' },
+      { id: 'step-2', case_id: 'case-01', step_order: 2, title: 'Rédaction acte chez le Notaire', status: 'termine', completed_by_name: 'Emmanuel FOTSO', completed_at: '2026-10-28T14:30:00Z' },
+      { id: 'step-3', case_id: 'case-01', step_order: 3, title: 'Dépôt à la Conservation Foncière du Wouri', status: 'termine', completed_by_name: 'Emmanuel FOTSO', completed_at: '2026-11-04T09:00:00Z' },
+      { id: 'step-4', case_id: 'case-01', step_order: 4, title: 'Validation formelle Direction Générale', status: 'en_cours' },
+      { id: 'step-5', case_id: 'case-01', step_order: 5, title: 'Délivrance du duplicatum Titre Foncier au client', status: 'en_attente' },
+    ],
+    notes: 'Dossier complet, attente de l\'approbation formelle de M. le Directeur Général pour clôture des honoraires.',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
 ];
 
-export const INITIAL_RECEIPTS: Receipt[] = [
+export const INITIAL_FINANCING_CASES: FinancingCase[] = [
   {
-    id: 'rec-01',
-    reference: 'REC-2026-001',
-    sale_id: 'sale-01',
-    amount: 18000000,
-    payment_date: '2026-10-25',
-    payment_method: 'virement',
-    transaction_ref: 'VIR-UBA-994821',
-    received_by_name: 'Paul BELL',
-    notes: 'Règlement intégral comptant.',
-    created_at: new Date().toISOString(),
-  },
-];
-
-export const INITIAL_SETTLEMENTS: ThirdPartySettlement[] = [
-  {
-    id: 'rev-01',
-    reference: 'REV-2026-001',
-    partner_id: 'par-01',
-    partner_name: 'Famille EYANGO & Ayants-Droit',
-    sale_id: 'sale-01',
-    sale_reference: 'VTE-2026-001',
-    plot_number: 'Lot B-05',
-    total_sale_price: 18000000,
-    owner_base_amount: 15840000, // Part propriétaire (88%)
-    company_commission: 2160000, // Marge BELL (12%)
-    amount_paid_to_owner: 10000000,
-    balance_due_to_owner: 5840000,
-    status: 'partiellement_paye',
-    settlement_date: '2026-10-28',
-    payment_proof_ref: 'CHQ-BICEC-004812',
+    id: 'fin-01',
+    reference: 'FIN-2026-003',
+    client_id: 'cli-02',
+    partner_bank_name: 'UBA Cameroun (Banque Partenaire)',
+    purpose: 'Crédit Moyen Terme Acquisition & Viabilisation Lotissement',
+    amount_requested: 50000000, // 50M FCFA
+    amount_approved: 50000000,
+    duration_months: 60,
+    proposed_collateral: 'Hypothèque de premier rang sur Titre Foncier TF 22104/Wouri',
+    status: 'financement_obtenu',
+    assigned_to_name: 'Paul BELL (DG)',
+    commission_rate: 3.0, // 3%
+    commission_amount: 1500000, // 1,5M FCFA honoraires BELL
+    decision_date: '2026-10-30',
+    decision_notes: 'Comité de crédit UBA favorable, notification d\'accord signée.',
+    notes: 'Fonds débloqués pour le démarrage des travaux de voirie.',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -251,6 +251,9 @@ export const initLocalDatabase = () => {
   if (!localStorage.getItem(STORAGE_KEYS.SALES)) setStoredData(STORAGE_KEYS.SALES, INITIAL_SALES);
   if (!localStorage.getItem(STORAGE_KEYS.RECEIPTS)) setStoredData(STORAGE_KEYS.RECEIPTS, INITIAL_RECEIPTS);
   if (!localStorage.getItem(STORAGE_KEYS.THIRD_PARTY_SETTLEMENTS)) setStoredData(STORAGE_KEYS.THIRD_PARTY_SETTLEMENTS, INITIAL_SETTLEMENTS);
+  if (!localStorage.getItem(STORAGE_KEYS.SERVICE_TYPES)) setStoredData(STORAGE_KEYS.SERVICE_TYPES, INITIAL_SERVICE_TYPES);
+  if (!localStorage.getItem(STORAGE_KEYS.SERVICE_CASES)) setStoredData(STORAGE_KEYS.SERVICE_CASES, INITIAL_SERVICE_CASES);
+  if (!localStorage.getItem(STORAGE_KEYS.FINANCING_CASES)) setStoredData(STORAGE_KEYS.FINANCING_CASES, INITIAL_FINANCING_CASES);
   if (!localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS)) {
     setStoredData(STORAGE_KEYS.AUDIT_LOGS, [
       { id: 'log-init-01', user_id: 'user-admin-01', user_email: 'admin@bell-mms.cm', action: 'CREATE', module: 'SYSTEM', entity_name: 'app_settings', entity_id: 'current', old_values: null, new_values: DEFAULT_SETTINGS, ip_address: '127.0.0.1', created_at: new Date().toISOString() } as AuditLogEntry
