@@ -2,6 +2,7 @@ import { AppSettings, AuditLogEntry, Permission, UserProfile, UserRole } from '.
 import { Client, Partner, LandProperty, Subdivision, Block, Plot, PlotStatusHistory, PlotStatus } from '../types/land.types';
 import { Reservation, Sale, PaymentSchedule, Receipt, ThirdPartySettlement } from '../types/sales.types';
 import { ServiceType, ServiceCase, FinancingCase } from '../types/services.types';
+import { FinancialAccount, FinancialCategory, ExpenseRequest, FinancialTransaction, FinancialTransfer, CashClosure } from '../types/finance.types';
 
 export const STORAGE_KEYS = {
   SETTINGS: 'bell_mms_app_settings',
@@ -25,6 +26,12 @@ export const STORAGE_KEYS = {
   SERVICE_TYPES: 'bell_mms_service_types',
   SERVICE_CASES: 'bell_mms_service_cases',
   FINANCING_CASES: 'bell_mms_financing_cases',
+  FINANCIAL_ACCOUNTS: 'bell_mms_financial_accounts',
+  FINANCIAL_CATEGORIES: 'bell_mms_financial_categories',
+  EXPENSE_REQUESTS: 'bell_mms_expense_requests',
+  FINANCIAL_TRANSACTIONS: 'bell_mms_financial_transactions',
+  FINANCIAL_TRANSFERS: 'bell_mms_financial_transfers',
+  CASH_CLOSURES: 'bell_mms_cash_closures',
 };
 
 export const DEFAULT_ROLES: UserRole[] = [
@@ -58,8 +65,9 @@ export const DEFAULT_PERMISSIONS: Permission[] = [
   { id: 'p21', code: 'finance:expense:request', module: 'finance', name: 'Demander une dépense', description: 'Soumettre une demande' },
   { id: 'p22', code: 'finance:expense:approve', module: 'finance', name: 'Approuver les dépenses', description: 'Validation selon seuils' },
   { id: 'p23', code: 'finance:cash:manage', module: 'finance', name: 'Gérer les caisses', description: 'Mouvements et clôtures' },
-  { id: 'p24', code: 'projects:manage', module: 'projects', name: 'Gérer les chantiers', description: 'Suivi travaux' },
-  { id: 'p25', code: 'tenders:manage', module: 'tenders', name: 'Gérer les marchés publics', description: 'Appels d\'offres et contrats' },
+  { id: 'p24', code: 'finance:reports:export', module: 'finance', name: 'Exporter rapports financiers', description: 'États consolidés' },
+  { id: 'p25', code: 'projects:manage', module: 'projects', name: 'Gérer les chantiers', description: 'Suivi travaux' },
+  { id: 'p26', code: 'tenders:manage', module: 'tenders', name: 'Gérer les marchés publics', description: 'Appels d\'offres et contrats' },
 ];
 
 export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
@@ -156,7 +164,6 @@ export const INITIAL_SETTLEMENTS: ThirdPartySettlement[] = [
   { id: 'rev-01', reference: 'REV-2026-001', partner_id: 'par-01', partner_name: 'Famille EYANGO & Ayants-Droit', sale_id: 'sale-01', sale_reference: 'VTE-2026-001', plot_number: 'Lot B-05', total_sale_price: 18000000, owner_base_amount: 15840000, company_commission: 2160000, amount_paid_to_owner: 10000000, balance_due_to_owner: 5840000, status: 'partiellement_paye', settlement_date: '2026-10-28', payment_proof_ref: 'CHQ-BICEC-004812', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 
-// DONNÉES PHASE 4 : PRESTATIONS & FINANCEMENT
 export const INITIAL_SERVICE_TYPES: ServiceType[] = [
   { id: 'st-01', code: 'mutation_totale', name: 'Mutation Foncière Totale', description: 'Transfert intégral de propriété d\'un titre foncier existant auprès de la Conservation Foncière', standard_fee: 750000, estimated_duration_days: 60, required_documents: ['Titre Foncier original', 'Acte de vente notarié', 'CNI des parties', 'Quittance droits d\'enregistrement'], is_active: true },
   { id: 'st-02', code: 'mutation_partielle', name: 'Mutation Foncière Partielle (Morcellement)', description: 'Création d\'un nouveau titre foncier issu d\'un lotissement ou morcellement', standard_fee: 950000, estimated_duration_days: 90, required_documents: ['Plan de bornage visé par le Cadastre', 'Certificat de propriété récent', 'PV de bornage contradictoire', 'Acte de vente notarié'], is_active: true },
@@ -202,20 +209,85 @@ export const INITIAL_FINANCING_CASES: FinancingCase[] = [
     client_id: 'cli-02',
     partner_bank_name: 'UBA Cameroun (Banque Partenaire)',
     purpose: 'Crédit Moyen Terme Acquisition & Viabilisation Lotissement',
-    amount_requested: 50000000, // 50M FCFA
+    amount_requested: 50000000,
     amount_approved: 50000000,
     duration_months: 60,
     proposed_collateral: 'Hypothèque de premier rang sur Titre Foncier TF 22104/Wouri',
     status: 'financement_obtenu',
     assigned_to_name: 'Paul BELL (DG)',
-    commission_rate: 3.0, // 3%
-    commission_amount: 1500000, // 1,5M FCFA honoraires BELL
+    commission_rate: 3.0,
+    commission_amount: 1500000,
     decision_date: '2026-10-30',
     decision_notes: 'Comité de crédit UBA favorable, notification d\'accord signée.',
     notes: 'Fonds débloqués pour le démarrage des travaux de voirie.',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
+];
+
+// DONNÉES FINANCES ET TRÉSORERIE RÉELLES (PHASE 5)
+export const INITIAL_FINANCIAL_ACCOUNTS: FinancialAccount[] = [
+  { id: 'acc-01', code: 'CAISSE-PRINCIPALE', name: 'Caisse Centrale Akwa', account_type: 'caisse', currency: 'XAF', initial_balance: 5000000, current_balance: 4800000, is_active: true, notes: 'Caisse physique siège social Douala', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'acc-02', code: 'CAISSE-PK21', name: 'Caisse Secondaire Chantier PK21', account_type: 'caisse', currency: 'XAF', initial_balance: 1000000, current_balance: 650000, is_active: true, notes: 'Menues dépenses et carburant engins', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'acc-03', code: 'BNK-UBA-DLA', name: 'Compte Courant UBA Cameroun', account_type: 'banque', bank_name: 'UBA Cameroun', account_number: '10033-05200-12345678901-44', currency: 'XAF', initial_balance: 25000000, current_balance: 24500000, is_active: true, notes: 'Compte principal d\'encaissement des ventes', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'acc-04', code: 'BNK-BICEC-DLA', name: 'Compte Opérations BICEC Bonanjo', account_type: 'banque', bank_name: 'BICEC', account_number: '10001-06800-98765432109-12', currency: 'XAF', initial_balance: 15000000, current_balance: 12850000, is_active: true, notes: 'Compte de déblocage des crédits et garanties', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+
+export const INITIAL_EXPENSES: ExpenseRequest[] = [
+  {
+    id: 'exp-01',
+    reference: 'DEP-2026-012',
+    category_code: 'dep_travaux_viabilisation',
+    category_name: 'Travaux de viabilisation & Chantiers',
+    account_id: 'acc-01',
+    account_name: 'Caisse Centrale Akwa',
+    beneficiary: 'Entreprise de Terrassement du Littoral (ETL)',
+    amount: 1200000, // > 250k FCFA -> Exige validation DG !
+    expense_date: '2026-11-04',
+    description: 'Nivellement et ouverture des voies secondaires lotissement PK21',
+    requested_by_id: 'user-collab-01',
+    requested_by_name: 'Emmanuel FOTSO',
+    requires_dg_approval: true,
+    status: 'en_attente',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'exp-02',
+    reference: 'DEP-2026-011',
+    category_code: 'dep_frais_generaux',
+    category_name: 'Frais généraux & Fonctionnement',
+    account_id: 'acc-01',
+    account_name: 'Caisse Centrale Akwa',
+    beneficiary: 'Papeterie Centrale Akwa',
+    amount: 85000, // < 250k FCFA -> Dépense courante décaissée
+    expense_date: '2026-11-02',
+    description: 'Achat de fournitures de bureau, papier listing et classeurs d\'archives',
+    requested_by_id: 'user-sec-01',
+    requested_by_name: 'Chantal NGO',
+    requires_dg_approval: false,
+    status: 'decaisse',
+    approved_by_id: 'user-dg-01',
+    approved_by_name: 'Paul BELL (DG)',
+    approved_at: '2026-11-02T11:00:00Z',
+    disbursed_at: '2026-11-02T11:30:00Z',
+    payment_proof_ref: 'FAC-PAP-2026-881',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+];
+
+export const INITIAL_TRANSACTIONS: FinancialTransaction[] = [
+  { id: 'trx-01', reference: 'TRX-2026-001', account_id: 'acc-03', account_name: 'Compte Courant UBA Cameroun', transaction_type: 'recette', category_code: 'rec_vente_terrain', amount: 18000000, transaction_date: '2026-10-25', beneficiary_or_payer: 'SCI LOBE RESIDENCE', description: 'Encaissement total vente comptant Lot B-05 Japoma (VTE-2026-001)', related_entity_type: 'sale', related_entity_id: 'sale-01', balance_after: 42500000, created_by_name: 'Paul BELL', created_at: new Date().toISOString() },
+  { id: 'trx-02', reference: 'TRX-2026-002', account_id: 'acc-01', account_name: 'Caisse Centrale Akwa', transaction_type: 'depense', category_code: 'dep_frais_generaux', amount: 85000, transaction_date: '2026-11-02', beneficiary_or_payer: 'Papeterie Centrale Akwa', description: 'Fournitures de bureau (DEP-2026-011)', related_entity_type: 'expense', related_entity_id: 'exp-02', balance_after: 4800000, created_by_name: 'Chantal NGO', created_at: new Date().toISOString() },
+];
+
+export const INITIAL_TRANSFERS: FinancialTransfer[] = [
+  { id: 'trf-01', reference: 'TRF-2026-001', from_account_id: 'acc-03', from_account_name: 'Compte Courant UBA Cameroun', to_account_id: 'acc-01', to_account_name: 'Caisse Centrale Akwa', amount: 2000000, transfer_date: '2026-10-28', reason: 'Alimentation du fonds de caisse pour frais de démarches administratives', initiated_by_name: 'Paul BELL (DG)', created_at: new Date().toISOString() },
+];
+
+export const INITIAL_CASH_CLOSURES: CashClosure[] = [
+  { id: 'clo-01', reference: 'CLO-2026-11-07', account_id: 'acc-01', account_name: 'Caisse Centrale Akwa', closure_date: '2026-11-07', opening_balance: 4885000, total_inflow: 0, total_outflow: 85000, theoretical_balance: 4800000, physical_count_balance: 4800000, discrepancy: 0, discrepancy_explanation: 'Comptage physique rigoureusement conforme au solde théorique.', closed_by_name: 'Chantal NGO (Secrétaire)', status: 'validee', created_at: new Date().toISOString() },
 ];
 
 export const getStoredData = <T>(key: string, defaultValue: T): T => {
@@ -254,6 +326,11 @@ export const initLocalDatabase = () => {
   if (!localStorage.getItem(STORAGE_KEYS.SERVICE_TYPES)) setStoredData(STORAGE_KEYS.SERVICE_TYPES, INITIAL_SERVICE_TYPES);
   if (!localStorage.getItem(STORAGE_KEYS.SERVICE_CASES)) setStoredData(STORAGE_KEYS.SERVICE_CASES, INITIAL_SERVICE_CASES);
   if (!localStorage.getItem(STORAGE_KEYS.FINANCING_CASES)) setStoredData(STORAGE_KEYS.FINANCING_CASES, INITIAL_FINANCING_CASES);
+  if (!localStorage.getItem(STORAGE_KEYS.FINANCIAL_ACCOUNTS)) setStoredData(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS);
+  if (!localStorage.getItem(STORAGE_KEYS.EXPENSE_REQUESTS)) setStoredData(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES);
+  if (!localStorage.getItem(STORAGE_KEYS.FINANCIAL_TRANSACTIONS)) setStoredData(STORAGE_KEYS.FINANCIAL_TRANSACTIONS, INITIAL_TRANSACTIONS);
+  if (!localStorage.getItem(STORAGE_KEYS.FINANCIAL_TRANSFERS)) setStoredData(STORAGE_KEYS.FINANCIAL_TRANSFERS, INITIAL_TRANSFERS);
+  if (!localStorage.getItem(STORAGE_KEYS.CASH_CLOSURES)) setStoredData(STORAGE_KEYS.CASH_CLOSURES, INITIAL_CASH_CLOSURES);
   if (!localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS)) {
     setStoredData(STORAGE_KEYS.AUDIT_LOGS, [
       { id: 'log-init-01', user_id: 'user-admin-01', user_email: 'admin@bell-mms.cm', action: 'CREATE', module: 'SYSTEM', entity_name: 'app_settings', entity_id: 'current', old_values: null, new_values: DEFAULT_SETTINGS, ip_address: '127.0.0.1', created_at: new Date().toISOString() } as AuditLogEntry
