@@ -87,7 +87,11 @@ export interface Sale {
   notes?: string;
   created_at: string;
   updated_at: string;
+  // New optional fields for third‑party sales and margin tracking
+  is_third_party_plot?: boolean;
+  bell_margin_amount?: number;
 }
+
 
 export interface ThirdPartySettlement {
   id: string;

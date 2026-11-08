@@ -25,6 +25,10 @@ import { ThirdPartySalesPage } from './modules/sales/ThirdPartySalesPage';
 import { ServicesPage } from './modules/services/ServicesPage';
 import { FinancingPage } from './modules/financing/FinancingPage';
 
+// Modules Phase 5 (Finances & Trésorerie)
+import { FinancePage } from './modules/finance/FinancePage';
+import { FinancialReportsPage } from './modules/finance/FinancialReportsPage';
+
 // Placeholders des phases suivantes
 import { ModulePlaceholder } from './components/shared/ModulePlaceholder';
 import { Building2, ShieldCheck, DollarSign, Calendar } from 'lucide-react';
@@ -184,22 +188,20 @@ export const App: React.FC = () => {
                   }
                 />
 
+                {/* Module Finances & Trésorerie (Phase 5) */}
                 <Route
                   path="/finance"
                   element={
                     <ProtectedRoute requiredPermission="finance:read">
-                      <ModulePlaceholder
-                        title="Finances & Gestion de Trésorerie"
-                        phase="Phase 5"
-                        description="Caisses multiples, banques, dépenses avec seuils et clôtures journalières"
-                        icon={DollarSign}
-                        features={[
-                          "Tenue des caisses physiques et comptes bancaires",
-                          "Demandes de décaissement avec justification",
-                          "Validation obligatoire par mot de passe selon seuils",
-                          "Rapprochements et clôtures journalières inaltérables",
-                        ]}
-                      />
+                      <FinancePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/finance/reports"
+                  element={
+                    <ProtectedRoute requiredPermission="finance:reports:export">
+                      <FinancialReportsPage />
                     </ProtectedRoute>
                   }
                 />
