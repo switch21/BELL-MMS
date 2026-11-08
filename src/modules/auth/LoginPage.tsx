@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Shield, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
+import { Shield, ArrowRight, CheckCircle2, Lock, Database, Layers } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
+import { isSupabaseConfigured } from '../../lib/supabase';
 
 export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -29,8 +30,13 @@ export const LoginPage: React.FC = () => {
       } else {
         setError('Identifiants non reconnus ou compte inactif.');
       }
-    } catch {
-      setError('Une erreur réseau ou système est survenue.');
+    } catch (err: unknown) {
+      // Afficher le message d'erreur Supabase s'il est disponible
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('Une erreur réseau ou système est survenue.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -61,6 +67,25 @@ export const LoginPage: React.FC = () => {
         <p className="mt-1 text-xs text-executive-emerald dark:text-executive-soft font-semibold uppercase tracking-wider">
           Système Intégré de Gestion d'Entreprise — Cameroun
         </p>
+
+        {/* Indicateur de mode de connexion : Supabase connecté vs démo */}
+        <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border">
+          {isSupabaseConfigured ? (
+            <>
+              <Database className="w-3 h-3 text-emerald-500" />
+              <span className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700">
+                Supabase connecté — authentification réelle
+              </span>
+            </>
+          ) : (
+            <>
+              <Layers className="w-3 h-3 text-amber-500" />
+              <span className="text-amber-600 dark:text-amber-400">
+                Mode démo — authentification locale
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4">
@@ -107,33 +132,34 @@ export const LoginPage: React.FC = () => {
             </div>
           </form>
 
-          {/* Section de sélection rapide pour la recette et démonstration */}
-          <div className="mt-8 border-t border-slate-200 dark:border-executive-darkBorder pt-6">
-            <p className="text-xs font-semibold text-slate-500 dark:text-executive-darkMuted uppercase tracking-wider mb-3 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5 text-executive-emerald" />
-              Accès directs configurés pour la démonstration :
-            </p>
-            <div className="grid grid-cols-1 gap-2">
-              {usersList.map((user) => (
-                <button
-                  key={user.id}
-                  type="button"
-                  onClick={() => handleQuickLogin(user.email)}
-                  className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-executive-darkBorder hover:border-executive-emerald dark:hover:border-executive-emerald hover:bg-slate-50 dark:hover:bg-executive-darkBg transition-all flex items-center justify-between group"
-                >
-                  <div>
-                    <p className="text-xs font-semibold text-slate-800 dark:text-executive-darkText group-hover:text-executive-emerald">
-                      {user.first_name} {user.last_name}
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {user.job_title} ({user.email})
-                    </p>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-executive-emerald group-hover:translate-x-0.5 transition-all" />
-                </button>
-              ))}
+          {!isSupabaseConfigured && (
+            <div className="mt-8 border-t border-slate-200 dark:border-executive-darkBorder pt-6">
+              <p className="text-xs font-semibold text-slate-500 dark:text-executive-darkMuted uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-executive-emerald" />
+                Accès directs configurés pour la démonstration :
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {usersList.map((user) => (
+                  <button
+                    key={user.id}
+                    type="button"
+                    onClick={() => handleQuickLogin(user.email)}
+                    className="w-full text-left p-2.5 rounded-lg border border-slate-200 dark:border-executive-darkBorder hover:border-executive-emerald dark:hover:border-executive-emerald hover:bg-slate-50 dark:hover:bg-executive-darkBg transition-all flex items-center justify-between group"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold text-slate-800 dark:text-executive-darkText group-hover:text-executive-emerald">
+                        {user.first_name} {user.last_name}
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {user.job_title} ({user.email})
+                      </p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-executive-emerald group-hover:translate-x-0.5 transition-all" />
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="mt-6 text-center text-xs text-slate-500 dark:text-executive-darkMuted">

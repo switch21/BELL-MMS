@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Briefcase, Plus, DollarSign, Building, Search, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -17,16 +17,20 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const FinancingPage: React.FC = () => {
-  const { currentUser, hasPermission } = useAuth();
+  const { currentUser, hasPermission, hasRole } = useAuth();
 
   const [financingCases, setFinancingCases] = useState<FinancingCase[]>(() =>
-    getStoredData<FinancingCase[]>(STORAGE_KEYS.FINANCING_CASES, INITIAL_FINANCING_CASES)
+    isSupabaseConfigured ? [] : getStoredData<FinancingCase[]>(STORAGE_KEYS.FINANCING_CASES, INITIAL_FINANCING_CASES)
   );
-  const [clients] = useState<Client[]>(() =>
-    getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
+  const [clients, setClients] = useState<Client[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -49,17 +53,54 @@ export const FinancingPage: React.FC = () => {
   const [decisionNotes, setDecisionNotes] = useState('');
 
   const canWrite = hasPermission('services:write');
+  const canDecide = hasPermission('services:validate') || hasRole(['directeur_general', 'super_admin']);
 
-  const handleSaveFinancing = (e: React.FormEvent) => {
+  const refreshSupabaseData = async () => {
+    const [clientsResult, casesResult] = await Promise.all([
+      supabase.from('clients').select('*').order('created_at', { ascending: false }),
+      supabase.from('financing_cases').select('*, partner:partners(name)').order('created_at', { ascending: false }),
+    ]);
+
+    if (clientsResult.error) throw clientsResult.error;
+    if (casesResult.error) throw casesResult.error;
+
+    setClients((clientsResult.data ?? []) as Client[]);
+    setFinancingCases((casesResult.data ?? []).map((item) => ({
+      ...item,
+      partner_bank_name: item.partner?.name ?? 'Banque non renseignée',
+      assigned_to_name: undefined,
+    })) as FinancingCase[]);
+    setClientId((current) => current || clientsResult.data?.[0]?.id || '');
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    refreshSupabaseData()
+      .catch((error: unknown) => {
+        console.error('[Supabase] Impossible de charger les dossiers de financement :', error);
+        if (active) setDataError('Impossible de charger les dossiers de financement depuis Supabase. Vérifiez les migrations et vos droits.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSaveFinancing = async (e: React.FormEvent) => {
     e.preventDefault();
     const client = clients.find((c) => c.id === clientId);
     if (!client) return;
 
-    const ref = `FIN-2026-${String(financingCases.length + 1).padStart(3, '0')}`;
+    const ref = `FIN-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const commAmount = Math.round((amountRequested * commissionRate) / 100);
 
     const newCase: FinancingCase = {
-      id: `fin-${Date.now()}`,
+      id: crypto.randomUUID(),
       reference: ref,
       client_id: client.id,
       partner_bank_name: bankName,
@@ -77,29 +118,66 @@ export const FinancingPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    const updated = [newCase, ...financingCases];
-    setFinancingCases(updated);
-    setStoredData(STORAGE_KEYS.FINANCING_CASES, updated);
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { data: partners, error: partnerError } = await supabase
+          .from('partners')
+          .select('id, name')
+          .eq('partner_type', 'banque');
+        if (partnerError) throw partnerError;
+        const bank = partners?.find((partner) => partner.name.toLowerCase() === bankName.trim().toLowerCase());
+        if (!bank) throw new Error('Enregistrez d’abord cette banque dans Clients & Partenaires avec le type Banque.');
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'FINANCING',
-      entity_name: 'financing_cases',
-      entity_id: newCase.id,
-      old_values: null,
-      new_values: newCase,
-    });
+        const { error } = await supabase.from('financing_cases').insert({
+          id: newCase.id,
+          reference: newCase.reference,
+          client_id: newCase.client_id,
+          partner_bank_id: bank.id,
+          purpose: newCase.purpose,
+          amount_requested: newCase.amount_requested,
+          amount_approved: 0,
+          duration_months: newCase.duration_months,
+          proposed_collateral: newCase.proposed_collateral,
+          status: newCase.status,
+          assigned_to: currentUser?.id,
+          commission_rate: newCase.commission_rate,
+          commission_amount: newCase.commission_amount,
+          notes: newCase.notes,
+        });
+        if (error) throw error;
+        await refreshSupabaseData();
+      } else {
+        const updated = [newCase, ...financingCases];
+        setFinancingCases(updated);
+        setStoredData(STORAGE_KEYS.FINANCING_CASES, updated);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'FINANCING',
+          entity_name: 'financing_cases',
+          entity_id: newCase.id,
+          old_values: null,
+          new_values: newCase,
+        });
+      }
 
-    setIsModalOpen(false);
-    setPurpose('');
-    setNotes('');
+      setIsModalOpen(false);
+      setPurpose('');
+      setNotes('');
+    } catch (error) {
+      console.error('[Financement] Échec de création du dossier :', error);
+      setDataError(error instanceof Error ? error.message : 'La création du dossier a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSaveDecision = (e: React.FormEvent) => {
+  const handleSaveDecision = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCase) return;
+    if (!selectedCase || !canDecide) return;
 
     const commAmount = Math.round((amountApproved * selectedCase.commission_rate) / 100);
 
@@ -118,22 +196,46 @@ export const FinancingPage: React.FC = () => {
       return f;
     });
 
-    setFinancingCases(updated);
-    setStoredData(STORAGE_KEYS.FINANCING_CASES, updated);
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('financing_cases')
+          .update({
+            status: decisionStatus,
+            amount_approved: amountApproved,
+            commission_amount: commAmount,
+            decision_date: new Date().toISOString().split('T')[0],
+            decision_notes: decisionNotes,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', selectedCase.id);
+        if (error) throw error;
+        await refreshSupabaseData();
+      } else {
+        setFinancingCases(updated);
+        setStoredData(STORAGE_KEYS.FINANCING_CASES, updated);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'UPDATE',
+          module: 'FINANCING:DECISION',
+          entity_name: 'financing_cases',
+          entity_id: selectedCase.id,
+          old_values: { status: selectedCase.status, amount_approved: selectedCase.amount_approved },
+          new_values: { status: decisionStatus, amount_approved: amountApproved, notes: decisionNotes },
+        });
+      }
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'UPDATE',
-      module: 'FINANCING:DECISION',
-      entity_name: 'financing_cases',
-      entity_id: selectedCase.id,
-      old_values: { status: selectedCase.status, amount_approved: selectedCase.amount_approved },
-      new_values: { status: decisionStatus, amount_approved: amountApproved, notes: decisionNotes },
-    });
-
-    setIsDecisionModalOpen(false);
-    setSelectedCase(null);
+      setIsDecisionModalOpen(false);
+      setSelectedCase(null);
+    } catch (error) {
+      console.error('[Financement] Échec d’enregistrement de la décision :', error);
+      setDataError(error instanceof Error ? error.message : 'L’enregistrement de la décision a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const totalRequested = financingCases.reduce((sum, f) => sum + f.amount_requested, 0);
@@ -169,6 +271,17 @@ export const FinancingPage: React.FC = () => {
           </Button>
         )}
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des dossiers de financement…
+        </p>
+      )}
 
       {/* Cartes KPI Financement */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -285,7 +398,7 @@ export const FinancingPage: React.FC = () => {
                         </Badge>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <Button
+                        {canDecide && <Button
                           variant="outline"
                           size="sm"
                           onClick={() => {
@@ -298,7 +411,7 @@ export const FinancingPage: React.FC = () => {
                           className="text-[11px] py-1 px-2.5 h-7"
                         >
                           Mettre à Jour
-                        </Button>
+                        </Button>}
                       </td>
                     </tr>
                   );
@@ -397,7 +510,7 @@ export const FinancingPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Enregistrer le Dossier Bancaire
             </Button>
           </div>
@@ -455,7 +568,7 @@ export const FinancingPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsDecisionModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Enregistrer la Décision
             </Button>
           </div>

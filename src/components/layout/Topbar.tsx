@@ -3,6 +3,7 @@ import { Sun, Moon, LogOut, Bell, UserCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Button } from '../ui/Button';
+import { isSupabaseConfigured } from '../../lib/supabase';
 
 export const Topbar: React.FC = () => {
   const { currentUser, currentRole, logout, switchUser, usersList } = useAuth();
@@ -27,24 +28,25 @@ export const Topbar: React.FC = () => {
 
       {/* Actions & Raccourcis de droite */}
       <div className="flex items-center gap-3">
-        {/* Sélecteur rapide de rôle (Mode bac à sable / validation rapide de chaque persona) */}
-        <div className="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-executive-darkBg py-1 px-2.5 rounded-lg border border-slate-200 dark:border-executive-darkBorder text-xs">
-          <UserCheck className="w-3.5 h-3.5 text-executive-emerald" />
-          <span className="text-slate-500 dark:text-slate-400 text-[11px] font-medium">
-            Changer de profil :
-          </span>
-          <select
-            value={currentUser?.id}
-            onChange={(e) => switchUser(e.target.value)}
-            className="bg-transparent text-xs font-semibold text-slate-800 dark:text-executive-darkText outline-none cursor-pointer"
-          >
-            {usersList.map((u) => (
-              <option key={u.id} value={u.id} className="dark:bg-slate-900">
-                {u.first_name} ({u.job_title})
-              </option>
-            ))}
-          </select>
-        </div>
+        {!isSupabaseConfigured && (
+          <div className="hidden md:flex items-center gap-2 bg-slate-100 dark:bg-executive-darkBg py-1 px-2.5 rounded-lg border border-slate-200 dark:border-executive-darkBorder text-xs">
+            <UserCheck className="w-3.5 h-3.5 text-executive-emerald" />
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] font-medium">
+              Changer de profil :
+            </span>
+            <select
+              value={currentUser?.id}
+              onChange={(e) => switchUser(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-slate-800 dark:text-executive-darkText outline-none cursor-pointer"
+            >
+              {usersList.map((u) => (
+                <option key={u.id} value={u.id} className="dark:bg-slate-900">
+                  {u.first_name} ({u.job_title})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Basculeur de thème Clair / Sombre */}
         <Button

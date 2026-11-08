@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Settings, Save, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -6,44 +6,95 @@ import { Input } from '../../components/ui/Input';
 import { useAuth } from '../../context/AuthContext';
 import { AppSettings } from '../../types/auth.types';
 import { DEFAULT_SETTINGS, getStoredData, logAuditEvent, setStoredData, STORAGE_KEYS } from '../../lib/storage';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const SettingsPage: React.FC = () => {
   const { currentUser, hasRole } = useAuth();
   const [settings, setSettings] = useState<AppSettings>(() =>
-    getStoredData(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
+    isSupabaseConfigured ? DEFAULT_SETTINGS : getStoredData(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS)
   );
   const [isSaved, setIsSaved] = useState(false);
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const canEdit = hasRole('super_admin');
 
-  const handleSave = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    const loadSettings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_settings')
+          .select('*')
+          .eq('id', 'current')
+          .single();
+        if (error) throw error;
+        if (active && data) setSettings(data as AppSettings);
+      } catch (error) {
+        console.error('[Supabase] Impossible de charger les paramètres :', error);
+        if (active) setDataError('Impossible de charger les paramètres depuis Supabase. Vérifiez les migrations et vos droits.');
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+    void loadSettings();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canEdit) {
       alert('Seul le Super Administrateur est habilité à modifier la configuration globale.');
       return;
     }
 
-    const oldSettings = getStoredData(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
+    setIsSaving(true);
+    setDataError(null);
+    const oldSettings = settings;
     const updated: AppSettings = {
       ...settings,
       updated_at: new Date().toISOString(),
     };
 
-    setStoredData(STORAGE_KEYS.SETTINGS, updated);
+    try {
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase
+          .from('app_settings')
+          .update(updated)
+          .eq('id', 'current')
+          .select()
+          .single();
+        if (error) throw error;
+        if (!data) throw new Error('Supabase n’a retourné aucun paramètre modifié.');
+        setSettings(data as AppSettings);
+      } else {
+        setStoredData(STORAGE_KEYS.SETTINGS, updated);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'UPDATE',
+          module: 'SETTINGS',
+          entity_name: 'app_settings',
+          entity_id: 'current',
+          old_values: oldSettings,
+          new_values: updated,
+        });
+      }
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'UPDATE',
-      module: 'SETTINGS',
-      entity_name: 'app_settings',
-      entity_id: 'current',
-      old_values: oldSettings,
-      new_values: updated,
-    });
-
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 3000);
+    } catch (error) {
+      console.error('[Paramètres] Échec de mise à jour :', error);
+      setDataError(error instanceof Error ? error.message : 'La mise à jour des paramètres a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -58,6 +109,17 @@ export const SettingsPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des paramètres…
+        </p>
+      )}
 
       {!canEdit && (
         <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center gap-2.5 text-xs text-amber-800 dark:text-amber-300">
@@ -191,7 +253,7 @@ export const SettingsPage: React.FC = () => {
 
         {canEdit && (
           <div className="flex justify-end">
-            <Button type="submit" variant="primary" className="gap-2">
+            <Button type="submit" variant="primary" className="gap-2" isLoading={isSaving}>
               <Save className="w-4 h-4" />
               Enregistrer les Paramètres
             </Button>

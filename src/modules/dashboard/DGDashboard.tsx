@@ -1,40 +1,81 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   TrendingUp,
   MapPin,
   Clock,
   AlertTriangle,
   ArrowUpRight,
-  ArrowDownRight,
   CheckCircle,
   Building,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
-import { Button } from '../../components/ui/Button';
 import { formatCurrency } from '../../lib/utils';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { Sale } from '../../types/sales.types';
+import { Plot } from '../../types/land.types';
+import { FinancialAccount, ExpenseRequest } from '../../types/finance.types';
+import {
+  getStoredData,
+  INITIAL_SALES,
+  INITIAL_PLOTS,
+  INITIAL_FINANCIAL_ACCOUNTS,
+  INITIAL_EXPENSES,
+  STORAGE_KEYS,
+} from '../../lib/storage';
 
 export const DGDashboard: React.FC = () => {
-  // Données de pilotage d'entreprise (données opérationnelles réelles calculées)
-  const stats = {
-    turnover: 184500000, // 184,5M FCFA de ventes
-    cashBalance: 42800000, // 42,8M FCFA en caisse et banques
-    pendingExpenses: 3, // Dépenses en attente d'approbation DG (> 250k)
-    activeProjects: 4, // Viabilisation et chantiers en cours
-    plotsAvailable: 34,
-    plotsReserved: 12,
-    plotsSold: 78,
-  };
+  // --- Ventes : chiffre d'affaires = somme des final_price des ventes status 'soldee' ---
+  const sales = getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES);
+  const turnover = sales.filter(s => s.status === 'soldee').reduce((sum, s) => sum + s.final_price, 0);
 
-  const chartData = [
-    { month: 'Juin', Ventes: 24, Dépenses: 8 },
-    { month: 'Juil', Ventes: 32, Dépenses: 12 },
-    { month: 'Août', Ventes: 18, Dépenses: 10 },
-    { month: 'Sept', Ventes: 45, Dépenses: 15 },
-    { month: 'Oct', Ventes: 52, Dépenses: 14 },
-    { month: 'Nov', Ventes: 68, Dépenses: 19 },
-  ];
+  // --- Parcelles ---
+  const plots = getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS);
+  const plotsAvailable = plots.filter(p => p.status === 'disponible').length;
+  const plotsReserved = plots.filter(p => p.status === 'reservee').length;
+  const plotsSold = plots.filter(p => p.status === 'vendue').length;
+
+  // --- Trésorerie ---
+  const accounts = getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS);
+  const cashBalance = accounts.reduce((sum, a) => sum + a.current_balance, 0);
+  const totalCash = accounts.filter(a => a.account_type === 'caisse').reduce((sum, a) => sum + a.current_balance, 0);
+  const totalBanks = accounts.filter(a => a.account_type === 'banque').reduce((sum, a) => sum + a.current_balance, 0);
+
+  // --- Dépenses en attente d'approbation DG ---
+  const expenses = getStoredData<ExpenseRequest[]>(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES);
+  const pendingExpenses = expenses.filter(e => e.status === 'en_attente' && e.requires_dg_approval);
+  const pendingExpensesTotal = pendingExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  // --- Graphique dynamique : ventes soldées regroupées par mois sur les 6 derniers mois ---
+  const chartData = (() => {
+    const now = new Date();
+    const months: { key: string; label: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('fr-FR', { month: 'short' });
+      months.push({ key, label });
+    }
+
+    return months.map(({ key, label }) => {
+      // Ventes soldées du mois (en millions FCFA)
+      const ventesM = sales
+        .filter(s => s.status === 'soldee' && s.sale_date.startsWith(key))
+        .reduce((sum, s) => sum + s.final_price, 0) / 1_000_000;
+
+      return {
+        month: label.charAt(0).toUpperCase() + label.slice(1),
+        Ventes: Math.round(ventesM * 10) / 10,
+        // Les dépenses décaissées sur ce mois sont incluses à titre indicatif
+        Dépenses: Math.round(
+          expenses
+            .filter(e => e.status === 'decaisse' && e.expense_date.startsWith(key))
+            .reduce((sum, e) => sum + e.amount, 0) / 1_000_000 * 10
+        ) / 10,
+      };
+    });
+  })();
 
   return (
     <div className="space-y-6">
@@ -57,6 +98,7 @@ export const DGDashboard: React.FC = () => {
 
       {/* Cartes KPI Principales */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Chiffre d'Affaires (ventes soldées) */}
         <Card>
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -69,15 +111,16 @@ export const DGDashboard: React.FC = () => {
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-xl font-bold text-slate-900 dark:text-white">
-                {formatCurrency(stats.turnover)}
+                {formatCurrency(turnover)}
               </span>
             </div>
             <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center font-medium">
-              <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" /> +14.2% vs trimestre précédent
+              <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" /> Ventes soldées cumulées
             </p>
           </CardContent>
         </Card>
 
+        {/* Trésorerie Disponible (caisses + banques) */}
         <Card>
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -90,15 +133,16 @@ export const DGDashboard: React.FC = () => {
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-xl font-bold text-slate-900 dark:text-white">
-                {formatCurrency(stats.cashBalance)}
+                {formatCurrency(cashBalance)}
               </span>
             </div>
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              Caisses : 4,8M | Banques : 38,0M
+              Caisses : {formatCurrency(totalCash)} | Banques : {formatCurrency(totalBanks)}
             </p>
           </CardContent>
         </Card>
 
+        {/* Parcelles Commercialisées */}
         <Card>
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -111,15 +155,16 @@ export const DGDashboard: React.FC = () => {
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-xl font-bold text-slate-900 dark:text-white">
-                {stats.plotsSold} <span className="text-xs font-normal text-slate-500">/ 124 totales</span>
+                {plotsSold} <span className="text-xs font-normal text-slate-500">/ {plots.length} totales</span>
               </span>
             </div>
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              {stats.plotsAvailable} disponibles, {stats.plotsReserved} réservées
+              {plotsAvailable} disponibles, {plotsReserved} réservées
             </p>
           </CardContent>
         </Card>
 
+        {/* Validations Requises */}
         <Card className="border-l-4 border-l-amber-500">
           <CardContent className="p-5">
             <div className="flex items-center justify-between">
@@ -132,11 +177,11 @@ export const DGDashboard: React.FC = () => {
             </div>
             <div className="mt-2 flex items-baseline gap-2">
               <span className="text-xl font-bold text-amber-600 dark:text-amber-400">
-                {stats.pendingExpenses} dépenses
+                {pendingExpenses.length} dépenses
               </span>
             </div>
             <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-              Montant total : 1 850 000 FCFA
+              Montant total : {formatCurrency(pendingExpensesTotal)}
             </p>
           </CardContent>
         </Card>
@@ -144,10 +189,10 @@ export const DGDashboard: React.FC = () => {
 
       {/* Graphique d'activité & Alertes de direction */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Graphique comparatif Ventes / Dépenses (en millions) */}
+        {/* Graphique comparatif Ventes / Dépenses (en millions) — données dynamiques 6 derniers mois */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Évolution Commerciale & Décaissements (Millions FCFA)</CardTitle>
+            <CardTitle>Évolution Commerciale &amp; Décaissements (Millions FCFA)</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-64 w-full">
@@ -172,7 +217,7 @@ export const DGDashboard: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Liste des validations en attente */}
+        {/* Liste des validations en attente — données réelles depuis localStorage */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
@@ -181,49 +226,45 @@ export const DGDashboard: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="p-3 rounded-lg border border-slate-200 dark:border-executive-darkBorder bg-slate-50 dark:bg-executive-darkBg space-y-2">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Paiement Terrassier Lotissement PK21
-                  </p>
-                  <p className="text-[11px] text-slate-500">Demandeur : Emmanuel FOTSO</p>
-                </div>
-                <span className="text-xs font-bold text-slate-900 dark:text-white">
-                  1 200 000 FCFA
-                </span>
+            {pendingExpenses.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-6 text-center text-slate-400 dark:text-executive-darkMuted">
+                <CheckCircle className="w-8 h-8 mb-2 text-emerald-500" />
+                <p className="text-xs">Aucune dépense en attente</p>
               </div>
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" variant="primary" className="w-full text-[11px] py-1">
-                  Valider
-                </Button>
-                <Button size="sm" variant="outline" className="w-full text-[11px] py-1">
-                  Rejeter
-                </Button>
-              </div>
-            </div>
+            )}
 
-            <div className="p-3 rounded-lg border border-slate-200 dark:border-executive-darkBorder bg-slate-50 dark:bg-executive-darkBg space-y-2">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-xs font-semibold text-slate-900 dark:text-white">
-                    Frais Enregistrement Notarial Dossier #MUT-2026-08
-                  </p>
-                  <p className="text-[11px] text-slate-500">Demandeur : Chantal NGO</p>
+            {/* Dépenses en attente d'approbation DG (données dynamiques) */}
+            {pendingExpenses.map(exp => (
+              <div
+                key={exp.id}
+                className="p-3 rounded-lg border border-slate-200 dark:border-executive-darkBorder bg-slate-50 dark:bg-executive-darkBg space-y-2"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                      {exp.beneficiary}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Demandeur : {exp.requested_by_name}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-mono">{exp.reference}</p>
+                  </div>
+                  <span className="text-xs font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                    {formatCurrency(exp.amount)}
+                  </span>
                 </div>
-                <span className="text-xs font-bold text-slate-900 dark:text-white">
-                  650 000 FCFA
-                </span>
               </div>
-              <div className="flex gap-2 pt-1">
-                <Button size="sm" variant="primary" className="w-full text-[11px] py-1">
-                  Valider
-                </Button>
-                <Button size="sm" variant="outline" className="w-full text-[11px] py-1">
-                  Rejeter
-                </Button>
-              </div>
-            </div>
+            ))}
+
+            {/* Lien vers la page finance pour gérer toutes les dépenses */}
+            {pendingExpenses.length > 0 && (
+              <Link
+                to="/finance"
+                className="block text-center text-xs font-medium text-executive-emerald hover:underline pt-1"
+              >
+                Voir toutes les dépenses →
+              </Link>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -473,7 +473,7 @@ const totalPayables = settlements
             <Calendar className="w-5 h-5 text-executive-emerald" />
             Extrait du Journal Général de Trésorerie
           </CardTitle>
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="neutral" className="text-xs">
             {filteredTransactions.length} écritures
           </Badge>
         </CardHeader>
@@ -505,7 +505,7 @@ const totalPayables = settlements
                     </td>
                     <td className="p-3">
                       <Badge
-                        variant={trx.transaction_type === 'recette' ? 'emerald' : 'outline'}
+                        variant={trx.transaction_type === 'recette' ? 'emerald' : 'danger'}
                         className={`text-[10px] ${trx.transaction_type === 'depense' ? 'text-rose-600 border-rose-300' : ''}`}
                       >
                         {trx.transaction_type.toUpperCase()}

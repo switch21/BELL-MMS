@@ -34,7 +34,10 @@ npm run build
 
 ## 🗄️ Schéma PostgreSQL & Migrations Supabase
 
-Les scripts SQL prêts à être appliqués sont situés dans `supabase/migrations/` :
-- `001_initial_schema.sql` : Rôles, permissions, profils utilisateurs, audit_logs et app_settings.
-- `002_security_rls.sql` : Politiques Row Level Security (RLS) et fonctions d'autorisation `has_permission()`.
-- `003_audit_triggers.sql` : Trigger d'audit automatique `audit_trigger_func()` pour l'enregistrement immuable des modifications.
+Les migrations doivent être appliquées dans l'ordre `001` à `013` depuis `supabase/migrations/`. Elles définissent les rôles et permissions, les règles RLS, l'audit, le foncier, les ventes, les prestations, la trésorerie, les workflows atomiques de vente/réservation et l'attribution du super-administrateur.
+
+Pour activer Supabase, renseigner `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans `.env`. Ne jamais utiliser une clé `service_role` dans le navigateur. Les comptes Supabase Auth et leurs profils/rôles doivent être provisionnés dans le projet Supabase.
+
+La lecture et la création des clients/partenaires, les ventes/réservations/encaissements, les dossiers de financement et les paramètres utilisent Supabase lorsque ces variables sont configurées. Le foncier, les dossiers de prestations, la trésorerie, les utilisateurs et plusieurs journaux/rapports restent à raccorder. Sans configuration Supabase, l'application démarre en mode démonstration local.
+
+La migration `013_assign_super_admin_pat_epee.sql` exige que `pat.epee@gmail.com` existe dans Supabase Auth et qu'un profil correspondant soit déjà présent. Créer et provisionner ce compte avant d'appliquer les migrations.

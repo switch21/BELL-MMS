@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   TrendingUp,
   Clock,
@@ -39,26 +39,30 @@ import {
 } from '../../lib/storage';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generateReceiptPDF } from '../../lib/pdf-generator';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const SalesPage: React.FC = () => {
   const { currentUser, hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'sales' | 'reservations'>('sales');
 
   const [sales, setSales] = useState<Sale[]>(() =>
-    getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES)
+    isSupabaseConfigured ? [] : getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES)
   );
   const [reservations, setReservations] = useState<Reservation[]>(() =>
-    getStoredData<Reservation[]>(STORAGE_KEYS.RESERVATIONS, INITIAL_RESERVATIONS)
+    isSupabaseConfigured ? [] : getStoredData<Reservation[]>(STORAGE_KEYS.RESERVATIONS, INITIAL_RESERVATIONS)
   );
   const [receipts, setReceipts] = useState<Receipt[]>(() =>
-    getStoredData<Receipt[]>(STORAGE_KEYS.RECEIPTS, INITIAL_RECEIPTS)
+    isSupabaseConfigured ? [] : getStoredData<Receipt[]>(STORAGE_KEYS.RECEIPTS, INITIAL_RECEIPTS)
   );
-  const [clients] = useState<Client[]>(() =>
-    getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
+  const [clients, setClients] = useState<Client[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
   );
   const [plots, setPlots] = useState<Plot[]>(() =>
-    getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS)
+    isSupabaseConfigured ? [] : getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS)
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -91,6 +95,49 @@ export const SalesPage: React.FC = () => {
 
   const canCreateSale = hasPermission('sales:create');
 
+  const refreshSupabaseData = async () => {
+    const [clientsResult, plotsResult, salesResult, reservationsResult, receiptsResult] = await Promise.all([
+      supabase.from('clients').select('*').order('created_at', { ascending: false }),
+      supabase.from('plots').select('*').order('created_at', { ascending: false }),
+      supabase.from('sales').select('*, schedules:payment_schedules(*), receipts(*)').order('created_at', { ascending: false }),
+      supabase.from('reservations').select('*').order('created_at', { ascending: false }),
+      supabase.from('receipts').select('*').order('created_at', { ascending: false }),
+    ]);
+
+    for (const result of [clientsResult, plotsResult, salesResult, reservationsResult, receiptsResult]) {
+      if (result.error) throw result.error;
+    }
+
+    setClients((clientsResult.data ?? []) as Client[]);
+    setPlots((plotsResult.data ?? []) as Plot[]);
+    setSales((salesResult.data ?? []) as Sale[]);
+    setReservations((reservationsResult.data ?? []) as Reservation[]);
+    setReceipts((receiptsResult.data ?? []) as Receipt[]);
+    setSaleClientId((current) => current || clientsResult.data?.[0]?.id || '');
+    setResClientId((current) => current || clientsResult.data?.[0]?.id || '');
+    setSalePlotId((current) => current || plotsResult.data?.find((plot) => plot.status === 'disponible')?.id || '');
+    setResPlotId((current) => current || plotsResult.data?.find((plot) => plot.status === 'disponible')?.id || '');
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    setIsLoading(true);
+    refreshSupabaseData()
+      .catch((error: unknown) => {
+        console.error('[Supabase] Impossible de charger les ventes :', error);
+        if (active) setDataError('Impossible de charger ventes, réservations et parcelles depuis Supabase. Vérifiez les migrations et les droits.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Parcelles disponibles à la vente (ou réservées si transformation)
   const availablePlots = plots.filter((p) => p.status === 'disponible');
 
@@ -100,13 +147,58 @@ export const SalesPage: React.FC = () => {
   const totalPending = sales.reduce((sum, s) => sum + s.remaining_balance, 0);
 
   // 1. CRÉATION D'UNE NOUVELLE VENTE
-  const handleSaveSale = (e: React.FormEvent) => {
+  const handleSaveSale = async (e: React.FormEvent) => {
     e.preventDefault();
     const plot = plots.find((p) => p.id === salePlotId);
     const client = clients.find((c) => c.id === saleClientId);
 
     if (!plot || !client) {
       alert('Veuillez sélectionner un client et une parcelle valides.');
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { data, error } = await supabase.rpc('create_sale', {
+          p_client_id: client.id,
+          p_plot_id: plot.id,
+          p_sale_type: saleType,
+          p_initial_deposit: saleType === 'comptant' ? plot.total_price : saleDeposit,
+          p_payment_method: salePaymentMethod,
+          p_installments_count: saleType === 'echelonne' ? saleInstallmentsCount : 0,
+          p_reservation_id: null,
+          p_notes: saleNotes || null,
+        });
+        if (error) throw error;
+        if (!data) throw new Error('Supabase n’a retourné aucune vente créée.');
+
+        const createdSale = data as Sale;
+        await refreshSupabaseData();
+        const { data: receiptData, error: receiptError } = await supabase
+          .from('receipts')
+          .select('*')
+          .eq('sale_id', createdSale.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (receiptError) throw receiptError;
+        if (receiptData) {
+          const createdReceipt = receiptData as Receipt;
+          const clientName = client.client_type === 'entreprise'
+            ? client.company_name || client.last_name
+            : `${client.first_name || ''} ${client.last_name}`;
+          generateReceiptPDF(createdReceipt, createdSale, clientName, `${plot.plot_number} (${plot.area_sqm} m²)`);
+        }
+        setIsSaleModalOpen(false);
+        return;
+      } catch (error) {
+        console.error('[Ventes] Échec de création de la vente :', error);
+        setDataError(error instanceof Error ? error.message : 'La création de la vente a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -220,13 +312,36 @@ export const SalesPage: React.FC = () => {
   };
 
   // 2. CRÉATION D'UNE RÉSERVATION
-  const handleSaveReservation = (e: React.FormEvent) => {
+  const handleSaveReservation = async (e: React.FormEvent) => {
     e.preventDefault();
     const plot = plots.find((p) => p.id === resPlotId);
     const client = clients.find((c) => c.id === resClientId);
 
     if (!plot || !client) {
       alert('Veuillez sélectionner un client et une parcelle.');
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('create_reservation', {
+          p_client_id: client.id,
+          p_plot_id: plot.id,
+          p_deposit_amount: resDeposit,
+          p_duration_days: resDurationDays,
+          p_notes: resNotes || null,
+        });
+        if (error) throw error;
+        await refreshSupabaseData();
+        setIsReservationModalOpen(false);
+      } catch (error) {
+        console.error('[Ventes] Échec de création de la réservation :', error);
+        setDataError(error instanceof Error ? error.message : 'La création de la réservation a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -285,12 +400,52 @@ export const SalesPage: React.FC = () => {
   };
 
   // 3. ENCAISSEMENT D'UNE ÉCHÉANCE
-  const handleCollectPayment = (e: React.FormEvent) => {
+  const handleCollectPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSaleForPayment || paymentAmount <= 0) return;
 
     if (paymentAmount > selectedSaleForPayment.remaining_balance) {
       alert('Le montant versé ne peut pas dépasser le solde restant dû.');
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { data, error } = await supabase.rpc('collect_sale_payment', {
+          p_sale_id: selectedSaleForPayment.id,
+          p_amount: paymentAmount,
+          p_payment_method: paymentMethod,
+          p_transaction_ref: paymentTxRef || null,
+          p_notes: 'Paiement d’échéance contractuelle',
+        });
+        if (error) throw error;
+        if (!data) throw new Error('Supabase n’a retourné aucun reçu.');
+
+        const createdReceipt = data as Receipt;
+        const saleBeforePayment = selectedSaleForPayment;
+        const newRemaining = saleBeforePayment.remaining_balance - paymentAmount;
+        await refreshSupabaseData();
+        const client = clients.find((item) => item.id === saleBeforePayment.client_id);
+        const plot = plots.find((item) => item.id === saleBeforePayment.plot_id);
+        const clientName = client?.client_type === 'entreprise'
+          ? client.company_name || client.last_name
+          : `${client?.first_name || ''} ${client?.last_name || ''}`;
+        generateReceiptPDF(
+          createdReceipt,
+          { ...saleBeforePayment, remaining_balance: newRemaining },
+          clientName,
+          plot?.plot_number || 'Parcelle'
+        );
+        setIsPaymentModalOpen(false);
+        setSelectedSaleForPayment(null);
+      } catch (error) {
+        console.error('[Ventes] Échec d’encaissement :', error);
+        setDataError(error instanceof Error ? error.message : 'L’encaissement a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -396,6 +551,17 @@ export const SalesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des ventes, réservations et parcelles…
+        </p>
+      )}
 
       {/* Cartes KPI Financières & Commerciales */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -763,7 +929,7 @@ export const SalesPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsSaleModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Valider la Vente & Émettre le Reçu PDF
             </Button>
           </div>
@@ -833,7 +999,7 @@ export const SalesPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsReservationModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Confirmer la Réservation
             </Button>
           </div>
@@ -892,7 +1058,7 @@ export const SalesPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsPaymentModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Encaisser & Télécharger le Reçu PDF
             </Button>
           </div>

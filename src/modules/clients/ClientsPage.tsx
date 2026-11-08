@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Users, Plus, Phone, Mail, MapPin, Building, Search, UserCheck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -16,17 +16,21 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatPhone } from '../../lib/utils';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const ClientsPage: React.FC = () => {
   const { currentUser, hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'clients' | 'partners'>('clients');
 
   const [clients, setClients] = useState<Client[]>(() =>
-    getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
+    isSupabaseConfigured ? [] : getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
   );
   const [partners, setPartners] = useState<Partner[]>(() =>
-    getStoredData<Partner[]>(STORAGE_KEYS.PARTNERS, INITIAL_PARTNERS)
+    isSupabaseConfigured ? [] : getStoredData<Partner[]>(STORAGE_KEYS.PARTNERS, INITIAL_PARTNERS)
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -56,11 +60,48 @@ export const ClientsPage: React.FC = () => {
 
   const canWrite = hasPermission('clients:write');
 
-  const handleSaveClient = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let isActive = true;
+    const loadRecords = async () => {
+      setIsLoading(true);
+      setDataError(null);
+      try {
+        const [clientsResult, partnersResult] = await Promise.all([
+          supabase.from('clients').select('*').order('created_at', { ascending: false }),
+          supabase.from('partners').select('*').order('created_at', { ascending: false }),
+        ]);
+
+        if (clientsResult.error) throw clientsResult.error;
+        if (partnersResult.error) throw partnersResult.error;
+        if (!isActive) return;
+
+        setClients((clientsResult.data ?? []) as Client[]);
+        setPartners((partnersResult.data ?? []) as Partner[]);
+      } catch (error) {
+        if (isActive) {
+          console.error('[Supabase] Impossible de charger les clients et partenaires :', error);
+          setDataError('Impossible de charger les données depuis Supabase. Vérifiez la connexion, les migrations et vos droits.');
+        }
+      } finally {
+        if (isActive) setIsLoading(false);
+      }
+    };
+
+    void loadRecords();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const handleSaveClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setDataError(null);
     const newClient: Client = {
-      id: `cli-${Date.now()}`,
-      code: `CLI-2026-${String(clients.length + 1).padStart(3, '0')}`,
+      id: crypto.randomUUID(),
+      code: `CLI-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       client_type: clientType,
       first_name: clientFirstName,
       last_name: clientLastName,
@@ -76,30 +117,48 @@ export const ClientsPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    const updated = [newClient, ...clients];
-    setClients(updated);
-    setStoredData(STORAGE_KEYS.CLIENTS, updated);
+    try {
+      let savedClient = newClient;
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase.from('clients').insert(newClient).select().single();
+        if (error) throw error;
+        if (!data) throw new Error('Supabase n’a retourné aucun client créé.');
+        savedClient = data as Client;
+      }
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'CLIENTS',
-      entity_name: 'clients',
-      entity_id: newClient.id,
-      old_values: null,
-      new_values: newClient,
-    });
+      const updated = [savedClient, ...clients];
+      setClients(updated);
+      if (!isSupabaseConfigured) {
+        setStoredData(STORAGE_KEYS.CLIENTS, updated);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'CLIENTS',
+          entity_name: 'clients',
+          entity_id: savedClient.id,
+          old_values: null,
+          new_values: savedClient,
+        });
+      }
 
-    setIsClientModalOpen(false);
-    resetClientForm();
+      setIsClientModalOpen(false);
+      resetClientForm();
+    } catch (error) {
+      console.error('[Clients] Échec de création du client :', error);
+      setDataError(error instanceof Error ? error.message : 'La création du client a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSavePartner = (e: React.FormEvent) => {
+  const handleSavePartner = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
+    setDataError(null);
     const newPartner: Partner = {
-      id: `par-${Date.now()}`,
-      code: `PAR-2026-${String(partners.length + 1).padStart(3, '0')}`,
+      id: crypto.randomUUID(),
+      code: `PAR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
       partner_type: partnerType,
       name: partnerName,
       contact_person: partnerContact,
@@ -113,23 +172,39 @@ export const ClientsPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    const updated = [newPartner, ...partners];
-    setPartners(updated);
-    setStoredData(STORAGE_KEYS.PARTNERS, updated);
+    try {
+      let savedPartner = newPartner;
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase.from('partners').insert(newPartner).select().single();
+        if (error) throw error;
+        if (!data) throw new Error('Supabase n’a retourné aucun partenaire créé.');
+        savedPartner = data as Partner;
+      }
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'PARTNERS',
-      entity_name: 'partners',
-      entity_id: newPartner.id,
-      old_values: null,
-      new_values: newPartner,
-    });
+      const updated = [savedPartner, ...partners];
+      setPartners(updated);
+      if (!isSupabaseConfigured) {
+        setStoredData(STORAGE_KEYS.PARTNERS, updated);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'PARTNERS',
+          entity_name: 'partners',
+          entity_id: savedPartner.id,
+          old_values: null,
+          new_values: savedPartner,
+        });
+      }
 
-    setIsPartnerModalOpen(false);
-    resetPartnerForm();
+      setIsPartnerModalOpen(false);
+      resetPartnerForm();
+    } catch (error) {
+      console.error('[Clients] Échec de création du partenaire :', error);
+      setDataError(error instanceof Error ? error.message : 'La création du partenaire a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const resetClientForm = () => {
@@ -211,6 +286,18 @@ export const ClientsPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des clients et partenaires…
+        </p>
+      )}
 
       {/* Onglets & Barre de recherche */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-executive-darkBorder pb-4">
@@ -507,7 +594,7 @@ export const ClientsPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsClientModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Enregistrer le Client
             </Button>
           </div>
@@ -597,7 +684,7 @@ export const ClientsPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsPartnerModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Enregistrer le Partenaire
             </Button>
           </div>
