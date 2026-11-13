@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   MapPin,
   Plus,
@@ -39,22 +39,26 @@ import {
 } from '../../lib/storage';
 import { formatCurrency } from '../../lib/utils';
 import { InteractiveLandMap } from '../../components/map/InteractiveLandMap';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const LandPage: React.FC = () => {
   const { currentUser, hasPermission } = useAuth();
 
   const [landProperties, setLandProperties] = useState<LandProperty[]>(() =>
-    getStoredData<LandProperty[]>(STORAGE_KEYS.LAND_PROPERTIES, INITIAL_LAND_PROPERTIES)
+    isSupabaseConfigured ? [] : getStoredData<LandProperty[]>(STORAGE_KEYS.LAND_PROPERTIES, INITIAL_LAND_PROPERTIES)
   );
-  const [subdivisions] = useState<Subdivision[]>(() =>
-    getStoredData<Subdivision[]>(STORAGE_KEYS.SUBDIVISIONS, INITIAL_SUBDIVISIONS)
+  const [subdivisions, setSubdivisions] = useState<Subdivision[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Subdivision[]>(STORAGE_KEYS.SUBDIVISIONS, INITIAL_SUBDIVISIONS)
   );
-  const [blocks] = useState<Block[]>(() =>
-    getStoredData<Block[]>(STORAGE_KEYS.BLOCKS, INITIAL_BLOCKS)
+  const [blocks, setBlocks] = useState<Block[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Block[]>(STORAGE_KEYS.BLOCKS, INITIAL_BLOCKS)
   );
   const [plots, setPlots] = useState<Plot[]>(() =>
-    getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS)
+    isSupabaseConfigured ? [] : getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS)
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>(
     landProperties[0]?.id || ''
@@ -93,6 +97,44 @@ export const LandPage: React.FC = () => {
   const canManageLand = hasPermission('land:write');
   const canChangeStatus = hasPermission('land:status:change') || canManageLand;
 
+  const refreshLandData = async () => {
+    const [propertiesResult, subdivisionsResult, blocksResult, plotsResult] = await Promise.all([
+      supabase.from('land_properties').select('*').order('created_at', { ascending: false }),
+      supabase.from('subdivisions').select('*').order('created_at'),
+      supabase.from('blocks').select('*').order('created_at'),
+      supabase.from('plots').select('*').order('created_at'),
+    ]);
+
+    for (const result of [propertiesResult, subdivisionsResult, blocksResult, plotsResult]) {
+      if (result.error) throw result.error;
+    }
+
+    setLandProperties((propertiesResult.data ?? []) as LandProperty[]);
+    setSubdivisions((subdivisionsResult.data ?? []) as Subdivision[]);
+    setBlocks((blocksResult.data ?? []) as Block[]);
+    setPlots((plotsResult.data ?? []) as Plot[]);
+    setSelectedPropertyId((current) => current || propertiesResult.data?.[0]?.id || '');
+    setNewPlotBlockId((current) => current || blocksResult.data?.[0]?.id || '');
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    refreshLandData()
+      .catch((error: unknown) => {
+        console.error('[Supabase] Impossible de charger le patrimoine foncier :', error);
+        if (active) setDataError('Impossible de charger le foncier depuis Supabase. Vérifiez les migrations et les droits.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const currentProperty = landProperties.find((p) => p.id === selectedPropertyId);
   const currentSubdivision = subdivisions.find((s) => s.land_property_id === selectedPropertyId);
   const propertyPlots = plots.filter((p) =>
@@ -117,7 +159,7 @@ export const LandPage: React.FC = () => {
   };
 
   // Création d'une nouvelle parcelle
-  const handleSavePlot = (e: React.FormEvent) => {
+  const handleSavePlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentSubdivision) return;
 
@@ -155,28 +197,54 @@ export const LandPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    const updatedPlots = [...plots, newPlot];
-    setPlots(updatedPlots);
-    setStoredData(STORAGE_KEYS.PLOTS, updatedPlots);
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.rpc('create_land_plot', {
+          p_subdivision_id: currentSubdivision.id,
+          p_block_id: newPlotBlockId || null,
+          p_plot_number: newPlotNumber,
+          p_area_sqm: newPlotArea,
+          p_facade_m: newPlotFacade,
+          p_depth_m: newPlotDepth,
+          p_price_per_sqm: newPlotPriceSqm,
+          p_latitude: newPlot.latitude,
+          p_longitude: newPlot.longitude,
+          p_notes: newPlotNotes || null,
+        });
+        if (error) throw error;
+        await refreshLandData();
+      } else {
+        const updatedPlots = [...plots, newPlot];
+        setPlots(updatedPlots);
+        setStoredData(STORAGE_KEYS.PLOTS, updatedPlots);
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'LAND',
-      entity_name: 'plots',
-      entity_id: newPlot.id,
-      old_values: null,
-      new_values: newPlot,
-    });
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'LAND',
+          entity_name: 'plots',
+          entity_id: newPlot.id,
+          old_values: null,
+          new_values: newPlot,
+        });
+      }
 
-    setIsPlotModalOpen(false);
-    setNewPlotNumber('');
-    setNewPlotNotes('');
+      setIsPlotModalOpen(false);
+      setNewPlotNumber('');
+      setNewPlotNotes('');
+    } catch (error) {
+      console.error('[Foncier] Échec de création de la parcelle :', error);
+      setDataError(error instanceof Error ? error.message : 'La création de la parcelle a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Changement de statut sécurisé (avec enregistrement du motif et traçabilité)
-  const handleStatusChange = (e: React.FormEvent) => {
+  const handleStatusChange = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPlot || !statusChangeReason.trim()) {
       alert('Veuillez renseigner un motif obligatoire pour ce changement de statut.');
@@ -204,42 +272,61 @@ export const LandPage: React.FC = () => {
       return p;
     });
 
-    setPlots(updatedPlots);
-    setStoredData(STORAGE_KEYS.PLOTS, updatedPlots);
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase.rpc('change_plot_status', {
+          p_plot_id: selectedPlot.id,
+          p_new_status: targetStatus,
+          p_reason: statusChangeReason.trim(),
+        });
+        if (error) throw error;
+        await refreshLandData();
+      } else {
+        setPlots(updatedPlots);
+        setStoredData(STORAGE_KEYS.PLOTS, updatedPlots);
 
-    // Enregistrement dans l'historique des statuts de parcelles
-    const statusHistory = getStoredData<PlotStatusHistory[]>(STORAGE_KEYS.PLOT_STATUS_HISTORY, []);
-    const historyEntry: PlotStatusHistory = {
-      id: `hist-${Date.now()}`,
-      plot_id: selectedPlot.id,
-      old_status: oldStatus,
-      new_status: targetStatus,
-      reason: statusChangeReason,
-      changed_by: currentUser?.id,
-      changed_at: new Date().toISOString(),
-    };
-    statusHistory.unshift(historyEntry);
-    setStoredData(STORAGE_KEYS.PLOT_STATUS_HISTORY, statusHistory);
+        // Enregistrement dans l'historique des statuts de parcelles
+        const statusHistory = getStoredData<PlotStatusHistory[]>(STORAGE_KEYS.PLOT_STATUS_HISTORY, []);
+        const historyEntry: PlotStatusHistory = {
+          id: `hist-${Date.now()}`,
+          plot_id: selectedPlot.id,
+          old_status: oldStatus,
+          new_status: targetStatus,
+          reason: statusChangeReason,
+          changed_by: currentUser?.id,
+          changed_at: new Date().toISOString(),
+        };
+        statusHistory.unshift(historyEntry);
+        setStoredData(STORAGE_KEYS.PLOT_STATUS_HISTORY, statusHistory);
 
-    // Audit Log de sécurité
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'UPDATE',
-      module: 'LAND',
-      entity_name: 'plots:status',
-      entity_id: selectedPlot.id,
-      old_values: { plot_number: selectedPlot.plot_number, status: oldStatus },
-      new_values: { status: targetStatus, reason: statusChangeReason },
-    });
+        // Audit Log de sécurité
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'UPDATE',
+          module: 'LAND',
+          entity_name: 'plots:status',
+          entity_id: selectedPlot.id,
+          old_values: { plot_number: selectedPlot.plot_number, status: oldStatus },
+          new_values: { status: targetStatus, reason: statusChangeReason },
+        });
+      }
 
-    setIsStatusModalOpen(false);
-    setSelectedPlot(null);
-    setStatusChangeReason('');
+      setIsStatusModalOpen(false);
+      setSelectedPlot(null);
+      setStatusChangeReason('');
+    } catch (error) {
+      console.error('[Foncier] Échec de changement du statut :', error);
+      setDataError(error instanceof Error ? error.message : 'Le changement de statut a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Création d'un nouveau domaine foncier
-  const handleSaveLand = (e: React.FormEvent) => {
+  const handleSaveLand = async (e: React.FormEvent) => {
     e.preventDefault();
     const newProperty: LandProperty = {
       id: `land-${Date.now()}`,
@@ -260,23 +347,50 @@ export const LandPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    const updated = [...landProperties, newProperty];
-    setLandProperties(updated);
-    setStoredData(STORAGE_KEYS.LAND_PROPERTIES, updated);
-    setSelectedPropertyId(newProperty.id);
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { data: landId, error } = await supabase.rpc('create_land_property', {
+          p_reference: newProperty.reference,
+          p_designation: newProperty.designation,
+          p_ownership_type: newProperty.ownership_type,
+          p_land_title_number: newProperty.land_title_number || null,
+          p_locality: newProperty.locality,
+          p_total_area_sqm: newProperty.total_area_sqm,
+          p_purchase_price: newProperty.purchase_price,
+          p_latitude: newProperty.latitude,
+          p_longitude: newProperty.longitude,
+        });
+        if (error) throw error;
+        if (!landId) throw new Error('Supabase n’a retourné aucun domaine créé.');
+        await refreshLandData();
+        setSelectedPropertyId(landId as string);
+      } else {
+        const updated = [...landProperties, newProperty];
+        setLandProperties(updated);
+        setStoredData(STORAGE_KEYS.LAND_PROPERTIES, updated);
+        setSelectedPropertyId(newProperty.id);
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'LAND',
-      entity_name: 'land_properties',
-      entity_id: newProperty.id,
-      old_values: null,
-      new_values: newProperty,
-    });
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'LAND',
+          entity_name: 'land_properties',
+          entity_id: newProperty.id,
+          old_values: null,
+          new_values: newProperty,
+        });
+      }
 
-    setIsLandModalOpen(false);
+      setIsLandModalOpen(false);
+    } catch (error) {
+      console.error('[Foncier] Échec de création du domaine :', error);
+      setDataError(error instanceof Error ? error.message : 'La création du domaine a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const getStatusBadge = (status: PlotStatus) => {

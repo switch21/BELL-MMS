@@ -34,7 +34,7 @@ npm run build
 
 ## 🗄️ Schéma PostgreSQL & Migrations Supabase
 
-Les migrations doivent être appliquées dans l'ordre `001` à `013` depuis `supabase/migrations/`. Elles définissent les rôles et permissions, les règles RLS, l'audit, le foncier, les ventes, les prestations, la trésorerie, les workflows atomiques de vente/réservation et l'attribution du super-administrateur.
+Les migrations doivent être appliquées dans l'ordre `001` à `014` depuis `supabase/migrations/`. Elles définissent les rôles et permissions, les règles RLS, l'audit, le foncier, les ventes, les prestations, la trésorerie, les workflows atomiques de vente/réservation et l'attribution du super-administrateur.
 
 Pour activer Supabase, renseigner `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans `.env`. Ne jamais utiliser une clé `service_role` dans le navigateur. Les comptes Supabase Auth et leurs profils/rôles doivent être provisionnés dans le projet Supabase.
 
