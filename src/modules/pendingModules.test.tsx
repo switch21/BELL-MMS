@@ -5,7 +5,6 @@ import { DGDashboard } from './dashboard/DGDashboard';
 import { SecretaryDashboard } from './dashboard/SecretaryDashboard';
 import { CollaboratorDashboard } from './dashboard/CollaboratorDashboard';
 import { AdminDashboard } from './dashboard/AdminDashboard';
-import { ServicesPage } from './services/ServicesPage';
 import { FinancePage } from './finance/FinancePage';
 import { FinancialReportsPage } from './finance/FinancialReportsPage';
 import { ThirdPartySalesPage } from './sales/ThirdPartySalesPage';
@@ -33,7 +32,6 @@ const MODULES = [
   { name: 'Secrétariat', element: <SecretaryDashboard />, title: "Tableau de Bord — Secrétariat & Accueil" },
   { name: 'Collaborateur', element: <CollaboratorDashboard />, title: "Mon Espace de Travail — Opérations" },
   { name: 'Administration', element: <AdminDashboard />, title: "Console d'Administration Système & Sécurité" },
-  { name: 'Prestations', element: <ServicesPage />, title: "Assistance Administrative & Prestations Foncières" },
   { name: 'Trésorerie', element: <FinancePage />, title: "Gestion Financière, Caisses & Trésorerie" },
   { name: 'Rapports', element: <FinancialReportsPage />, title: "Rapports & Synthèse Financière Consolidée" },
   { name: 'Terrains de tiers', element: <ThirdPartySalesPage />, title: "Commercialisation Terrains de Tiers & Suivi Propriétaires" },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   Plus,
@@ -38,21 +38,36 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatCurrency, formatDate, formatDateTime } from '../../lib/utils';
-import { isSupabaseConfigured } from '../../lib/supabase';
-import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+
+const DEFAULT_WORKFLOW_STEPS = [
+  'Collecte et examen des pièces justificatives',
+  'Rédaction technique / acte notarié / requête TPI',
+  "Dépôt et suivi auprès de l'administration compétente (Cadastre / MINDCAF / Tribunal)",
+  'Contrôle et validation formelle de la Direction Générale',
+  'Clôture du dossier et remise des actes finaux au client',
+];
+
+type ServiceCaseRow = ServiceCase & {
+  assigned_to?: string | null;
+  steps?: ServiceCaseStep[];
+};
 
 export const ServicesPage: React.FC = () => {
   const { currentUser, hasRole, hasPermission } = useAuth();
 
   const [cases, setCases] = useState<ServiceCase[]>(() =>
-    getStoredData<ServiceCase[]>(STORAGE_KEYS.SERVICE_CASES, INITIAL_SERVICE_CASES)
+    isSupabaseConfigured ? [] : getStoredData<ServiceCase[]>(STORAGE_KEYS.SERVICE_CASES, INITIAL_SERVICE_CASES)
   );
-  const [serviceTypes] = useState<ServiceType[]>(() =>
-    getStoredData<ServiceType[]>(STORAGE_KEYS.SERVICE_TYPES, INITIAL_SERVICE_TYPES)
+  const [serviceTypes, setServiceTypes] = useState<ServiceType[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<ServiceType[]>(STORAGE_KEYS.SERVICE_TYPES, INITIAL_SERVICE_TYPES)
   );
-  const [clients] = useState<Client[]>(() =>
-    getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
+  const [clients, setClients] = useState<Client[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Client[]>(STORAGE_KEYS.CLIENTS, INITIAL_CLIENTS)
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCase, setSelectedCase] = useState<ServiceCase | null>(null);
@@ -75,161 +90,333 @@ export const ServicesPage: React.FC = () => {
   const isDG = hasRole(['directeur_general', 'super_admin']);
   const canWrite = hasPermission('services:write');
 
+  const refreshServiceData = async (focusCaseId?: string) => {
+    const [casesResult, typesResult, clientsResult] = await Promise.all([
+      supabase.from('service_cases').select('*, steps:service_case_steps(*)').order('created_at', { ascending: false }),
+      supabase.from('service_types').select('*').eq('is_active', true).order('name'),
+      supabase.from('clients').select('*').order('created_at', { ascending: false }),
+    ]);
+
+    for (const result of [casesResult, typesResult, clientsResult]) {
+      if (result.error) throw result.error;
+    }
+
+    const loadedCases = ((casesResult.data ?? []) as ServiceCaseRow[]).map((row) => ({
+      ...row,
+      assigned_to_id: row.assigned_to ?? undefined,
+      steps: [...(row.steps ?? [])].sort((a, b) => a.step_order - b.step_order),
+    }));
+
+    setCases(loadedCases);
+    setServiceTypes((typesResult.data ?? []) as ServiceType[]);
+    setClients((clientsResult.data ?? []) as Client[]);
+    setCaseClientId((current) => current || clientsResult.data?.[0]?.id || '');
+    setCaseTypeId((current) => current || typesResult.data?.[0]?.id || '');
+
+    if (focusCaseId) {
+      const refreshed = loadedCases.find((item) => item.id === focusCaseId);
+      if (refreshed) setSelectedCase(refreshed);
+    }
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    refreshServiceData()
+      .catch((error: unknown) => {
+        console.error('[Prestations] Impossible de charger les dossiers :', error);
+        if (active) setDataError('Impossible de charger les dossiers de prestations depuis Supabase. Vérifiez les migrations et vos droits.');
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // 1. CRÉATION D'UN DOSSIER
-  const handleSaveCase = (e: React.FormEvent) => {
+  const handleSaveCase = async (e: React.FormEvent) => {
     e.preventDefault();
     const client = clients.find((c) => c.id === caseClientId);
     const serviceType = serviceTypes.find((s) => s.id === caseTypeId);
 
     if (!client || !serviceType) return;
 
-    const ref = `DOS-2026-${String(cases.length + 1).padStart(3, '0')}`;
+    const caseId = crypto.randomUUID();
+    const title = caseTitle || `${serviceType.name} — ${client.last_name}`;
+    const assignedToName = currentUser
+      ? `${currentUser.first_name} ${currentUser.last_name}`
+      : 'Collaborateur';
 
-    // Génération des étapes de workflow par défaut
-    const defaultSteps: ServiceCaseStep[] = [
-      { id: `step-${Date.now()}-1`, case_id: `case-${Date.now()}`, step_order: 1, title: 'Collecte et examen des pièces justificatives', status: 'en_cours' },
-      { id: `step-${Date.now()}-2`, case_id: `case-${Date.now()}`, step_order: 2, title: 'Rédaction technique / acte notarié / requête TPI', status: 'en_attente' },
-      { id: `step-${Date.now()}-3`, case_id: `case-${Date.now()}`, step_order: 3, title: 'Dépôt et suivi auprès de l\'administration compétente (Cadastre / MINDCAF / Tribunal)', status: 'en_attente' },
-      { id: `step-${Date.now()}-4`, case_id: `case-${Date.now()}`, step_order: 4, title: 'Contrôle et validation formelle de la Direction Générale', status: 'en_attente' },
-      { id: `step-${Date.now()}-5`, case_id: `case-${Date.now()}`, step_order: 5, title: 'Clôture du dossier et remise des actes finaux au client', status: 'en_attente' },
-    ];
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error: caseError } = await supabase.from('service_cases').insert({
+          id: caseId,
+          reference: `DOS-${new Date().getFullYear()}-${caseId.slice(0, 8).toUpperCase()}`,
+          client_id: client.id,
+          service_type_id: serviceType.id,
+          title,
+          assigned_to: currentUser?.id ?? null,
+          assigned_to_name: assignedToName,
+          opened_date: new Date().toISOString().split('T')[0],
+          target_date: caseTargetDate || null,
+          status: 'pieces_en_cours',
+          fee_agreed: caseFee,
+          expenses_estimated: caseExpensesEst,
+          notes: caseNotes || null,
+        });
+        if (caseError) throw caseError;
 
-    const newCase: ServiceCase = {
-      id: `case-${Date.now()}`,
-      reference: ref,
-      client_id: client.id,
-      service_type_id: serviceType.id,
-      title: caseTitle || `${serviceType.name} — ${client.last_name}`,
-      assigned_to_id: currentUser?.id,
-      assigned_to_name: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Collaborateur',
-      opened_date: new Date().toISOString().split('T')[0],
-      target_date: caseTargetDate || undefined,
-      status: 'pieces_en_cours',
-      fee_agreed: caseFee,
-      expenses_estimated: caseExpensesEst,
-      expenses_actual: 0,
-      amount_paid: 0,
-      dg_validation_status: 'non_soumis',
-      steps: defaultSteps,
-      notes: caseNotes,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+        const { error: stepsError } = await supabase.from('service_case_steps').insert(
+          DEFAULT_WORKFLOW_STEPS.map((stepTitle, index) => ({
+            case_id: caseId,
+            step_order: index + 1,
+            title: stepTitle,
+            status: index === 0 ? 'en_cours' : 'en_attente',
+          }))
+        );
+        if (stepsError) throw stepsError;
 
-    const updated = [newCase, ...cases];
-    setCases(updated);
-    setStoredData(STORAGE_KEYS.SERVICE_CASES, updated);
+        await refreshServiceData();
+      } else {
+        const newCase: ServiceCase = {
+          id: caseId,
+          reference: `DOS-2026-${String(cases.length + 1).padStart(3, '0')}`,
+          client_id: client.id,
+          service_type_id: serviceType.id,
+          title,
+          assigned_to_id: currentUser?.id,
+          assigned_to_name: assignedToName,
+          opened_date: new Date().toISOString().split('T')[0],
+          target_date: caseTargetDate || undefined,
+          status: 'pieces_en_cours',
+          fee_agreed: caseFee,
+          expenses_estimated: caseExpensesEst,
+          expenses_actual: 0,
+          amount_paid: 0,
+          dg_validation_status: 'non_soumis',
+          steps: DEFAULT_WORKFLOW_STEPS.map((stepTitle, index) => ({
+            id: `${caseId}-step-${index + 1}`,
+            case_id: caseId,
+            step_order: index + 1,
+            title: stepTitle,
+            status: index === 0 ? 'en_cours' : 'en_attente',
+          })),
+          notes: caseNotes,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'CREATE',
-      module: 'SERVICES',
-      entity_name: 'service_cases',
-      entity_id: newCase.id,
-      old_values: null,
-      new_values: newCase,
-    });
+        const updated = [newCase, ...cases];
+        setCases(updated);
+        setStoredData(STORAGE_KEYS.SERVICE_CASES, updated);
 
-    setIsNewCaseModalOpen(false);
-    setCaseTitle('');
-    setCaseNotes('');
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'CREATE',
+          module: 'SERVICES',
+          entity_name: 'service_cases',
+          entity_id: newCase.id,
+          old_values: null,
+          new_values: newCase,
+        });
+      }
+
+      setIsNewCaseModalOpen(false);
+      setCaseTitle('');
+      setCaseNotes('');
+    } catch (error) {
+      console.error('[Prestations] Échec de création du dossier :', error);
+      setDataError(error instanceof Error ? error.message : 'La création du dossier a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // 2. AVANCEMENT D'UNE ÉTAPE DU WORKFLOW
-  const handleToggleStep = (stepId: string) => {
-    if (!selectedCase) return;
+  const handleToggleStep = async (stepId: string) => {
+    if (!selectedCase || isSaving) return;
 
-    const updatedSteps = selectedCase.steps.map((st) => {
-      if (st.id === stepId) {
-        const nextStatus = st.status === 'termine' ? 'en_cours' : 'termine';
-        return {
-          ...st,
-          status: nextStatus as any,
-          completed_by_name: nextStatus === 'termine' ? `${currentUser?.first_name} ${currentUser?.last_name}` : undefined,
-          completed_at: nextStatus === 'termine' ? new Date().toISOString() : undefined,
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const step = selectedCase.steps.find((item) => item.id === stepId);
+        if (!step) return;
+
+        const isCompleting = step.status !== 'termine';
+        const completedByName = isCompleting && currentUser
+          ? `${currentUser.first_name} ${currentUser.last_name}`
+          : null;
+
+        const { error } = await supabase
+          .from('service_case_steps')
+          .update({
+            status: isCompleting ? 'termine' : 'en_cours',
+            completed_by: isCompleting ? currentUser?.id ?? null : null,
+            completed_by_name: completedByName,
+            completed_at: isCompleting ? new Date().toISOString() : null,
+          })
+          .eq('id', stepId);
+        if (error) throw error;
+
+        await refreshServiceData(selectedCase.id);
+      } else {
+        const updatedSteps = selectedCase.steps.map((st) => {
+          if (st.id === stepId) {
+            const nextStatus = st.status === 'termine' ? 'en_cours' : 'termine';
+            return {
+              ...st,
+              status: nextStatus as any,
+              completed_by_name: nextStatus === 'termine' ? `${currentUser?.first_name} ${currentUser?.last_name}` : undefined,
+              completed_at: nextStatus === 'termine' ? new Date().toISOString() : undefined,
+            };
+          }
+          return st;
+        });
+
+        const updatedCase = {
+          ...selectedCase,
+          steps: updatedSteps,
+          updated_at: new Date().toISOString(),
         };
+
+        const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
+        setCases(updatedCases);
+        setSelectedCase(updatedCase);
+        setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
       }
-      return st;
-    });
-
-    const updatedCase = {
-      ...selectedCase,
-      steps: updatedSteps,
-      updated_at: new Date().toISOString(),
-    };
-
-    const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
-    setCases(updatedCases);
-    setSelectedCase(updatedCase);
-    setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
+    } catch (error) {
+      console.error('[Prestations] Échec de mise à jour de l’étape :', error);
+      setDataError(error instanceof Error ? error.message : 'La mise à jour de l’étape a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // 3. SOUMISSION AU DIRECTEUR GÉNÉRAL POUR ARBITRAGE
-  const handleSubmitToDG = () => {
-    if (!selectedCase) return;
+  const handleSubmitToDG = async () => {
+    if (!selectedCase || isSaving) return;
 
-    const updatedCase: ServiceCase = {
-      ...selectedCase,
-      status: 'soumis_validation_dg',
-      dg_validation_status: 'en_attente',
-      updated_at: new Date().toISOString(),
-    };
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('service_cases')
+          .update({
+            status: 'soumis_validation_dg',
+            dg_validation_status: 'en_attente',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', selectedCase.id);
+        if (error) throw error;
 
-    const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
-    setCases(updatedCases);
-    setSelectedCase(updatedCase);
-    setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
+        await refreshServiceData(selectedCase.id);
+      } else {
+        const updatedCase: ServiceCase = {
+          ...selectedCase,
+          status: 'soumis_validation_dg',
+          dg_validation_status: 'en_attente',
+          updated_at: new Date().toISOString(),
+        };
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'UPDATE',
-      module: 'SERVICES',
-      entity_name: 'service_cases:submit_dg',
-      entity_id: selectedCase.id,
-      old_values: { dg_status: selectedCase.dg_validation_status },
-      new_values: { dg_status: 'en_attente' },
-    });
+        const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
+        setCases(updatedCases);
+        setSelectedCase(updatedCase);
+        setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
 
-    alert('Dossier soumis avec succès pour arbitrage de Monsieur le Directeur Général.');
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'UPDATE',
+          module: 'SERVICES',
+          entity_name: 'service_cases:submit_dg',
+          entity_id: selectedCase.id,
+          old_values: { dg_status: selectedCase.dg_validation_status },
+          new_values: { dg_status: 'en_attente' },
+        });
+      }
+
+      alert('Dossier soumis avec succès pour arbitrage de Monsieur le Directeur Général.');
+    } catch (error) {
+      console.error('[Prestations] Échec de soumission au DG :', error);
+      setDataError(error instanceof Error ? error.message : 'La soumission au DG a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // 4. DÉCISION DU DIRECTEUR GÉNÉRAL (Approbation / Rejet / Observations)
-  const handleDGDecision = (e: React.FormEvent) => {
+  const handleDGDecision = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCase || !isDG) return;
+    if (!selectedCase || !isDG || isSaving) return;
 
     const isApproved = dgDecision === 'approuve';
 
-    const updatedCase: ServiceCase = {
-      ...selectedCase,
-      dg_validation_status: isApproved ? 'approuve' : 'rejete',
-      status: isApproved ? 'approuve_dg' : 'rejete_dg',
-      dg_validated_by_name: `${currentUser?.first_name} ${currentUser?.last_name}`,
-      dg_validation_date: new Date().toISOString(),
-      dg_notes: dgComment,
-      updated_at: new Date().toISOString(),
-    };
+    setIsSaving(true);
+    setDataError(null);
+    try {
+      if (isSupabaseConfigured) {
+        const { error } = await supabase
+          .from('service_cases')
+          .update({
+            dg_validation_status: dgDecision,
+            status: isApproved ? 'approuve_dg' : 'rejete_dg',
+            dg_validated_by: currentUser?.id ?? null,
+            dg_validated_by_name: currentUser
+              ? `${currentUser.first_name} ${currentUser.last_name}`
+              : null,
+            dg_validation_date: new Date().toISOString(),
+            dg_notes: dgComment,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', selectedCase.id);
+        if (error) throw error;
 
-    const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
-    setCases(updatedCases);
-    setSelectedCase(updatedCase);
-    setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
+        await refreshServiceData(selectedCase.id);
+      } else {
+        const updatedCase: ServiceCase = {
+          ...selectedCase,
+          dg_validation_status: isApproved ? 'approuve' : 'rejete',
+          status: isApproved ? 'approuve_dg' : 'rejete_dg',
+          dg_validated_by_name: `${currentUser?.first_name} ${currentUser?.last_name}`,
+          dg_validation_date: new Date().toISOString(),
+          dg_notes: dgComment,
+          updated_at: new Date().toISOString(),
+        };
 
-    logAuditEvent({
-      user_id: currentUser?.id || null,
-      user_email: currentUser?.email || null,
-      action: 'VALIDATE',
-      module: 'SERVICES:DG_ARBITRAGE',
-      entity_name: 'service_cases',
-      entity_id: selectedCase.id,
-      old_values: { dg_status: selectedCase.dg_validation_status },
-      new_values: { dg_decision: dgDecision, dg_comment: dgComment },
-    });
+        const updatedCases = cases.map((c) => (c.id === selectedCase.id ? updatedCase : c));
+        setCases(updatedCases);
+        setSelectedCase(updatedCase);
+        setStoredData(STORAGE_KEYS.SERVICE_CASES, updatedCases);
 
-    setDgComment('');
-    alert(`Décision de direction enregistrée : Dossier ${isApproved ? 'APPROUVÉ' : 'REJETÉ'}.`);
+        logAuditEvent({
+          user_id: currentUser?.id || null,
+          user_email: currentUser?.email || null,
+          action: 'VALIDATE',
+          module: 'SERVICES:DG_ARBITRAGE',
+          entity_name: 'service_cases',
+          entity_id: selectedCase.id,
+          old_values: { dg_status: selectedCase.dg_validation_status },
+          new_values: { dg_decision: dgDecision, dg_comment: dgComment },
+        });
+      }
+
+      setDgComment('');
+      alert(`Décision de direction enregistrée : Dossier ${isApproved ? 'APPROUVÉ' : 'REJETÉ'}.`);
+    } catch (error) {
+      console.error('[Prestations] Échec de la décision DG :', error);
+      setDataError(error instanceof Error ? error.message : 'L’enregistrement de la décision a échoué.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const filteredCases = cases.filter((c) => {
@@ -241,15 +428,6 @@ export const ServicesPage: React.FC = () => {
       client?.last_name.toLowerCase().includes(term)
     );
   });
-
-  if (isSupabaseConfigured) {
-    return (
-      <PendingSupabaseModule
-        title="Assistance Administrative & Prestations Foncières"
-        description="Les dossiers de mutation, d'hérédité et de cadastre ne sont pas encore alimentés par Supabase."
-      />
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -274,6 +452,17 @@ export const ServicesPage: React.FC = () => {
           </Button>
         )}
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des dossiers de prestations…
+        </p>
+      )}
 
       {/* Cartes KPI Dossiers */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
