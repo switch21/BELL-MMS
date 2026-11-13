@@ -32,6 +32,8 @@ import {
 } from '../../lib/storage';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generateFinancialReportPDF } from '../../lib/pdf-generator';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const FinancialReportsPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -146,6 +148,15 @@ const totalPayables = settlements
       periodLabel: periodLabels[period],
     });
   };
+
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Rapports & Synthèse Financière Consolidée"
+        description="Les rapports consolidés ne sont pas encore calculés depuis Supabase ; aucun chiffre de démonstration n'est affiché."
+      />
+    );
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">

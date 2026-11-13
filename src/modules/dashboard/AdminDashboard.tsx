@@ -4,8 +4,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Ca
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
 import { Link } from 'react-router-dom';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const AdminDashboard: React.FC = () => {
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Console d'Administration Système & Sécurité"
+        description="Les métriques techniques, la gestion des comptes et le journal d'audit ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

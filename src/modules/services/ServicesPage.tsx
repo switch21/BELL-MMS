@@ -38,6 +38,8 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatCurrency, formatDate, formatDateTime } from '../../lib/utils';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const ServicesPage: React.FC = () => {
   const { currentUser, hasRole, hasPermission } = useAuth();
@@ -239,6 +241,15 @@ export const ServicesPage: React.FC = () => {
       client?.last_name.toLowerCase().includes(term)
     );
   });
+
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Assistance Administrative & Prestations Foncières"
+        description="Les dossiers de mutation, d'hérédité et de cadastre ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

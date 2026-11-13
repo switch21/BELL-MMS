@@ -15,6 +15,8 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const ThirdPartySalesPage: React.FC = () => {
   const { currentUser, hasRole } = useAuth();
@@ -89,6 +91,15 @@ export const ThirdPartySalesPage: React.FC = () => {
       s.reference.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.plot_number.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Commercialisation Terrains de Tiers & Suivi Propriétaires"
+        description="Les reversements aux propriétaires tiers ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

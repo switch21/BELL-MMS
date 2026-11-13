@@ -24,8 +24,19 @@ import {
   INITIAL_EXPENSES,
   STORAGE_KEYS,
 } from '../../lib/storage';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const DGDashboard: React.FC = () => {
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Tableau de Bord Général — Direction"
+        description="Les indicateurs de ventes, de trésorerie et de patrimoine ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
+
   // --- Ventes : chiffre d'affaires = somme des final_price des ventes status 'soldee' ---
   const sales = getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES);
   const turnover = sales.filter(s => s.status === 'soldee').reduce((sum, s) => sum + s.final_price, 0);

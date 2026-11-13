@@ -3,8 +3,19 @@ import { FileText, Mail, Calendar, Clock, PlusCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const SecretaryDashboard: React.FC = () => {
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Tableau de Bord — Secrétariat & Accueil"
+        description="Le suivi des courriers, des dossiers clients et des rendez-vous n'est pas encore alimenté par Supabase."
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

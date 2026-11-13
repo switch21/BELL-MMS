@@ -38,6 +38,8 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { formatCurrency, formatDate, formatDateTime } from '../../lib/utils';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const FinancePage: React.FC = () => {
   const { currentUser, hasRole, hasPermission } = useAuth();
@@ -437,6 +439,15 @@ export const FinancePage: React.FC = () => {
     setDiscrepancyJustification('');
     alert(`Clôture journalière de ${account.name} validée et archivée de façon inaltérable.`);
   };
+
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Gestion Financière, Caisses & Trésorerie"
+        description="Les comptes, demandes de dépense, transferts et clôtures de caisse ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

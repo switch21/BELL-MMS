@@ -3,8 +3,19 @@ import { CheckSquare, Briefcase, Clock, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
 
 export const CollaboratorDashboard: React.FC = () => {
+  if (isSupabaseConfigured) {
+    return (
+      <PendingSupabaseModule
+        title="Mon Espace de Travail — Opérations"
+        description="Les dossiers assignés, les tâches et les comptes rendus de visite ne sont pas encore alimentés par Supabase."
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
