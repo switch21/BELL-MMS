@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -32,26 +32,69 @@ import {
 } from '../../lib/storage';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { generateFinancialReportPDF } from '../../lib/pdf-generator';
-import { isSupabaseConfigured } from '../../lib/supabase';
-import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const FinancialReportsPage: React.FC = () => {
   const { currentUser } = useAuth();
   const [period, setPeriod] = useState<'month' | 'quarter' | 'year' | 'all'>('all');
 
-  const accounts = getStoredData<FinancialAccount[]>(
-    STORAGE_KEYS.FINANCIAL_ACCOUNTS,
-    INITIAL_FINANCIAL_ACCOUNTS
+  const [accounts, setAccounts] = useState<FinancialAccount[]>(() =>
+    isSupabaseConfigured
+      ? []
+      : getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS)
   );
-  const transactions = getStoredData<FinancialTransaction[]>(
-    STORAGE_KEYS.FINANCIAL_TRANSACTIONS,
-    INITIAL_TRANSACTIONS
+  const [transactions, setTransactions] = useState<FinancialTransaction[]>(() =>
+    isSupabaseConfigured
+      ? []
+      : getStoredData<FinancialTransaction[]>(STORAGE_KEYS.FINANCIAL_TRANSACTIONS, INITIAL_TRANSACTIONS)
   );
-  const sales = getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES);
-  const settlements = getStoredData<ThirdPartySettlement[]>(
-    STORAGE_KEYS.THIRD_PARTY_SETTLEMENTS,
-    INITIAL_SETTLEMENTS
+  const [sales, setSales] = useState<Sale[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES)
   );
+  const [settlements, setSettlements] = useState<ThirdPartySettlement[]>(() =>
+    isSupabaseConfigured
+      ? []
+      : getStoredData<ThirdPartySettlement[]>(STORAGE_KEYS.THIRD_PARTY_SETTLEMENTS, INITIAL_SETTLEMENTS)
+  );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    (async () => {
+      const [accountsResult, transactionsResult, salesResult, settlementsResult] = await Promise.all([
+        supabase.from('financial_accounts').select('*').order('code'),
+        supabase.from('financial_transactions').select('*').order('transaction_date', { ascending: false }),
+        supabase.from('sales').select('*, client:clients(*)').order('sale_date', { ascending: false }),
+        supabase.from('third_party_settlements').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      for (const result of [accountsResult, transactionsResult, salesResult, settlementsResult]) {
+        if (result.error) throw result.error;
+      }
+
+      if (!active) return;
+      setAccounts((accountsResult.data ?? []) as FinancialAccount[]);
+      setTransactions((transactionsResult.data ?? []) as FinancialTransaction[]);
+      setSales((salesResult.data ?? []) as Sale[]);
+      setSettlements((settlementsResult.data ?? []) as ThirdPartySettlement[]);
+    })()
+      .catch((error: unknown) => {
+        console.error('[Rapports financiers] Impossible de charger la synthèse :', error);
+        if (active) {
+          setDataError('Impossible de charger la synthèse financière depuis Supabase. Vérifiez les migrations et vos droits.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Calculs Trésorerie
   const totalCash = accounts
@@ -149,15 +192,6 @@ const totalPayables = settlements
     });
   };
 
-  if (isSupabaseConfigured) {
-    return (
-      <PendingSupabaseModule
-        title="Rapports & Synthèse Financière Consolidée"
-        description="Les rapports consolidés ne sont pas encore calculés depuis Supabase ; aucun chiffre de démonstration n'est affiché."
-      />
-    );
-  }
-
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* En-tête */}
@@ -235,6 +269,17 @@ const totalPayables = settlements
           </Button>
         </div>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement de la synthèse financière…
+        </p>
+      )}
 
       {/* Cartes KPI Principaux */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

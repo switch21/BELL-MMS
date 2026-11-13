@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   DollarSign,
   Building,
@@ -37,30 +37,32 @@ import {
   setStoredData,
   STORAGE_KEYS,
 } from '../../lib/storage';
-import { formatCurrency, formatDate, formatDateTime } from '../../lib/utils';
-import { isSupabaseConfigured } from '../../lib/supabase';
-import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
+import { formatCurrency, formatDate } from '../../lib/utils';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const FinancePage: React.FC = () => {
   const { currentUser, hasRole, hasPermission } = useAuth();
   const [activeTab, setActiveTab] = useState<'accounts' | 'expenses' | 'transfers' | 'closures' | 'journal'>('accounts');
 
   const [accounts, setAccounts] = useState<FinancialAccount[]>(() =>
-    getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS)
+    isSupabaseConfigured ? [] : getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS)
   );
   const [expenses, setExpenses] = useState<ExpenseRequest[]>(() =>
-    getStoredData<ExpenseRequest[]>(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES)
+    isSupabaseConfigured ? [] : getStoredData<ExpenseRequest[]>(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES)
   );
   const [transfers, setTransfers] = useState<FinancialTransfer[]>(() =>
-    getStoredData<FinancialTransfer[]>(STORAGE_KEYS.FINANCIAL_TRANSFERS, INITIAL_TRANSFERS)
+    isSupabaseConfigured ? [] : getStoredData<FinancialTransfer[]>(STORAGE_KEYS.FINANCIAL_TRANSFERS, INITIAL_TRANSFERS)
   );
   const [closures, setClosures] = useState<CashClosure[]>(() =>
-    getStoredData<CashClosure[]>(STORAGE_KEYS.CASH_CLOSURES, INITIAL_CASH_CLOSURES)
+    isSupabaseConfigured ? [] : getStoredData<CashClosure[]>(STORAGE_KEYS.CASH_CLOSURES, INITIAL_CASH_CLOSURES)
   );
   const [transactions, setTransactions] = useState<FinancialTransaction[]>(() =>
-    getStoredData<FinancialTransaction[]>(STORAGE_KEYS.FINANCIAL_TRANSACTIONS, INITIAL_TRANSACTIONS)
+    isSupabaseConfigured ? [] : getStoredData<FinancialTransaction[]>(STORAGE_KEYS.FINANCIAL_TRANSACTIONS, INITIAL_TRANSACTIONS)
   );
 
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   // Modales
@@ -90,12 +92,79 @@ export const FinancePage: React.FC = () => {
 
   // Formulaire Clôture de Caisse
   const [closureAccountId, setClosureAccountId] = useState(accounts[0]?.id || '');
-  const [physicalCount, setPhysicalCount] = useState<number>(4800000);
+  const [physicalCount, setPhysicalCount] = useState<number>(isSupabaseConfigured ? 0 : 4800000);
   const [discrepancyJustification, setDiscrepancyJustification] = useState('');
 
   const isDG = hasRole(['directeur_general', 'super_admin']);
   const canRequestExpense = hasPermission('finance:expense:request');
   const canApproveExpense = hasPermission('finance:expense:approve') || isDG;
+
+  const refreshFinanceData = async () => {
+    const [accountsResult, expensesResult, transfersResult, closuresResult, transactionsResult] = await Promise.all([
+      supabase.from('financial_accounts').select('*').order('code'),
+      supabase.from('expense_requests').select('*').order('created_at', { ascending: false }),
+      supabase.from('financial_transfers').select('*').order('created_at', { ascending: false }),
+      supabase.from('cash_closures').select('*').order('created_at', { ascending: false }),
+      supabase.from('financial_transactions').select('*').order('created_at', { ascending: false }),
+    ]);
+
+    for (const result of [accountsResult, expensesResult, transfersResult, closuresResult, transactionsResult]) {
+      if (result.error) throw result.error;
+    }
+
+    const loadedAccounts = (accountsResult.data ?? []) as FinancialAccount[];
+    const accountNames = new Map(loadedAccounts.map((account) => [account.id, account.name]));
+
+    setAccounts(loadedAccounts);
+    setExpenses(
+      ((expensesResult.data ?? []) as Array<ExpenseRequest & { requested_by?: string | null; approved_by?: string | null }>).map(
+        (row) => ({
+          ...row,
+          requested_by_id: row.requested_by ?? row.requested_by_id,
+          approved_by_id: row.approved_by ?? row.approved_by_id,
+          account_name: row.account_name ?? accountNames.get(row.account_id),
+        })
+      )
+    );
+    setTransfers((transfersResult.data ?? []) as FinancialTransfer[]);
+    setClosures((closuresResult.data ?? []) as CashClosure[]);
+    setTransactions(
+      ((transactionsResult.data ?? []) as FinancialTransaction[]).map((row) => ({
+        ...row,
+        account_name: row.account_name ?? accountNames.get(row.account_id),
+      }))
+    );
+
+    const activeAccounts = loadedAccounts.filter((account) => account.is_active);
+    const defaultAccountId = activeAccounts[0]?.id ?? '';
+    const defaultBankId = activeAccounts.find((account) => account.account_type === 'banque')?.id ?? defaultAccountId;
+    const defaultCashId = activeAccounts.find((account) => account.account_type === 'caisse')?.id ?? defaultAccountId;
+
+    setExpAccountId((current) => current || defaultAccountId);
+    setFromAccountId((current) => current || defaultBankId);
+    setToAccountId((current) => current || defaultCashId);
+    setClosureAccountId((current) => current || defaultCashId);
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    refreshFinanceData()
+      .catch((error: unknown) => {
+        console.error('[Trésorerie] Impossible de charger les données financières :', error);
+        if (active) {
+          setDataError('Impossible de charger les données financières depuis Supabase. Vérifiez les migrations et vos droits.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const totalCash = accounts
     .filter((a) => a.account_type === 'caisse')
@@ -108,10 +177,36 @@ export const FinancePage: React.FC = () => {
   const totalGlobalTreasury = totalCash + totalBanks;
 
   // 1. CRÉATION D'UNE DEMANDE DE DÉPENSE
-  const handleSaveExpense = (e: React.FormEvent) => {
+  const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     const account = accounts.find((a) => a.id === expAccountId);
     if (!account) return;
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('create_expense_request', {
+          p_category_code: expCategory,
+          p_account_id: account.id,
+          p_beneficiary: expBeneficiary,
+          p_amount: expAmount,
+          p_description: expDescription,
+        });
+        if (error) throw error;
+
+        await refreshFinanceData();
+        setIsExpenseModalOpen(false);
+        setExpBeneficiary('');
+        setExpDescription('');
+      } catch (error) {
+        console.error('[Trésorerie] Échec de la demande de dépense :', error);
+        setDataError(error instanceof Error ? error.message : 'La demande de dépense a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
 
     // Seuil de validation DG : 250 000 FCFA
     const requiresDG = expAmount > 250000;
@@ -156,7 +251,7 @@ export const FinancePage: React.FC = () => {
   };
 
   // 2. APPROBATION SÉCURISÉE D'UNE DÉPENSE (SECTION 16.5 & 16.6)
-  const handleConfirmApproval = (e: React.FormEvent) => {
+  const handleConfirmApproval = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedExpenseForApproval) return;
 
@@ -169,6 +264,31 @@ export const FinancePage: React.FC = () => {
     // Confirmation d'autorité / vérification interne
     if (!approvalAuthCode.trim()) {
       alert('Veuillez saisir votre code d\'autorisation ou mot de passe de confirmation pour valider cette opération financière sensible.');
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('decide_expense_request', {
+          p_expense_id: selectedExpenseForApproval.id,
+          p_decision: approvalDecision,
+          p_notes: approvalNotes || null,
+        });
+        if (error) throw error;
+
+        await refreshFinanceData();
+        setIsApprovalModalOpen(false);
+        setSelectedExpenseForApproval(null);
+        setApprovalAuthCode('');
+        setApprovalNotes('');
+      } catch (error) {
+        console.error('[Trésorerie] Échec de l’arbitrage de la dépense :', error);
+        setDataError(error instanceof Error ? error.message : 'L’arbitrage de la dépense a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -217,7 +337,26 @@ export const FinancePage: React.FC = () => {
   };
 
   // 3. DÉCAISSEMENT EFFECTIF D'UNE DÉPENSE APPROUVÉE
-  const handleDisburseExpense = (expense: ExpenseRequest) => {
+  const handleDisburseExpense = async (expense: ExpenseRequest) => {
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('disburse_expense_request', {
+          p_expense_id: expense.id,
+        });
+        if (error) throw error;
+
+        await refreshFinanceData();
+      } catch (error) {
+        console.error('[Trésorerie] Échec du décaissement :', error);
+        setDataError(error instanceof Error ? error.message : 'Le décaissement a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     const account = accounts.find((a) => a.id === expense.account_id);
     if (!account) return;
 
@@ -283,7 +422,7 @@ export const FinancePage: React.FC = () => {
   };
 
   // 4. TRANSFERT INTER-COMPTES ATOMIQUE (SECTION 16.9)
-  const handleSaveTransfer = (e: React.FormEvent) => {
+  const handleSaveTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (fromAccountId === toAccountId) {
       alert('Le compte source et le compte destinataire doivent être distincts.');
@@ -297,6 +436,29 @@ export const FinancePage: React.FC = () => {
 
     if (fromAcc.current_balance < transferAmount) {
       alert(`Solde insuffisant sur ${fromAcc.name} (${formatCurrency(fromAcc.current_balance)}).`);
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('create_financial_transfer', {
+          p_from_account_id: fromAcc.id,
+          p_to_account_id: toAcc.id,
+          p_amount: transferAmount,
+          p_reason: transferReason,
+        });
+        if (error) throw error;
+
+        await refreshFinanceData();
+        setIsTransferModalOpen(false);
+      } catch (error) {
+        console.error('[Trésorerie] Échec du transfert inter-comptes :', error);
+        setDataError(error instanceof Error ? error.message : 'Le transfert inter-comptes a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -387,7 +549,7 @@ export const FinancePage: React.FC = () => {
   };
 
   // 5. CLÔTURE JOURNALIÈRE DE CAISSE AVEC COMPTAGE PHYSIQUE (SECTION 16.10)
-  const handleSaveClosure = (e: React.FormEvent) => {
+  const handleSaveClosure = async (e: React.FormEvent) => {
     e.preventDefault();
     const account = accounts.find((a) => a.id === closureAccountId);
     if (!account) return;
@@ -397,6 +559,29 @@ export const FinancePage: React.FC = () => {
 
     if (discrepancy !== 0 && !discrepancyJustification.trim()) {
       alert(`Un écart de caisse de ${formatCurrency(discrepancy)} a été constaté entre le solde théorique (${formatCurrency(theoreticalBal)}) et votre comptage physique (${formatCurrency(physicalCount)}). La justification écrite de cet écart est obligatoire.`);
+      return;
+    }
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      setDataError(null);
+      try {
+        const { error } = await supabase.rpc('close_cash_account', {
+          p_account_id: account.id,
+          p_physical_count: physicalCount,
+          p_explanation: discrepancyJustification || null,
+        });
+        if (error) throw error;
+
+        await refreshFinanceData();
+        setIsClosureModalOpen(false);
+        setDiscrepancyJustification('');
+      } catch (error) {
+        console.error('[Trésorerie] Échec de la clôture de caisse :', error);
+        setDataError(error instanceof Error ? error.message : 'La clôture de caisse a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
       return;
     }
 
@@ -440,15 +625,6 @@ export const FinancePage: React.FC = () => {
     alert(`Clôture journalière de ${account.name} validée et archivée de façon inaltérable.`);
   };
 
-  if (isSupabaseConfigured) {
-    return (
-      <PendingSupabaseModule
-        title="Gestion Financière, Caisses & Trésorerie"
-        description="Les comptes, demandes de dépense, transferts et clôtures de caisse ne sont pas encore alimentés par Supabase."
-      />
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -473,12 +649,36 @@ export const FinancePage: React.FC = () => {
               Transfert Inter-Comptes
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setIsClosureModalOpen(true)} className="gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const account = accounts.find((a) => a.id === closureAccountId)
+                ?? accounts.find((a) => a.account_type === 'caisse');
+              if (account) {
+                setClosureAccountId(account.id);
+                setPhysicalCount(account.current_balance);
+              }
+              setIsClosureModalOpen(true);
+            }}
+            className="gap-1.5"
+          >
             <Lock className="w-4 h-4" />
             Clôturer une Caisse
           </Button>
         </div>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des données de trésorerie…
+        </p>
+      )}
 
       {/* Cartes KPI Trésorerie Globale */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -498,7 +698,9 @@ export const FinancePage: React.FC = () => {
             <p className="text-xl font-bold text-slate-800 dark:text-slate-200 mt-1">
               {formatCurrency(totalCash)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-0.5">Caisse Akwa (4,8M) & PK21 (650k)</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {accounts.filter((a) => a.account_type === 'caisse').map((a) => a.name).join(' & ') || 'Aucune caisse active'}
+            </p>
           </CardContent>
         </Card>
 
@@ -508,7 +710,9 @@ export const FinancePage: React.FC = () => {
             <p className="text-xl font-bold text-blue-700 dark:text-blue-400 mt-1">
               {formatCurrency(totalBanks)}
             </p>
-            <p className="text-[11px] text-slate-500 mt-0.5">UBA Cameroun & BICEC Bonanjo</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {accounts.filter((a) => a.account_type === 'banque').map((a) => a.name).join(' & ') || 'Aucun compte bancaire actif'}
+            </p>
           </CardContent>
         </Card>
       </div>

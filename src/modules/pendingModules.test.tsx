@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { DGDashboard } from './dashboard/DGDashboard';
 import { SecretaryDashboard } from './dashboard/SecretaryDashboard';
 import { CollaboratorDashboard } from './dashboard/CollaboratorDashboard';
 import { AdminDashboard } from './dashboard/AdminDashboard';
-import { FinancePage } from './finance/FinancePage';
-import { FinancialReportsPage } from './finance/FinancialReportsPage';
 import { ThirdPartySalesPage } from './sales/ThirdPartySalesPage';
 
 vi.mock('../lib/supabase', () => ({
@@ -28,24 +25,19 @@ vi.mock('../context/AuthContext', () => ({
 }));
 
 const MODULES = [
-  { name: 'DG', element: <DGDashboard />, title: "Tableau de Bord Général — Direction" },
   { name: 'Secrétariat', element: <SecretaryDashboard />, title: "Tableau de Bord — Secrétariat & Accueil" },
   { name: 'Collaborateur', element: <CollaboratorDashboard />, title: "Mon Espace de Travail — Opérations" },
   { name: 'Administration', element: <AdminDashboard />, title: "Console d'Administration Système & Sécurité" },
-  { name: 'Trésorerie', element: <FinancePage />, title: "Gestion Financière, Caisses & Trésorerie" },
-  { name: 'Rapports', element: <FinancialReportsPage />, title: "Rapports & Synthèse Financière Consolidée" },
   { name: 'Terrains de tiers', element: <ThirdPartySalesPage />, title: "Commercialisation Terrains de Tiers & Suivi Propriétaires" },
 ];
 
 // Marqueurs propres aux jeux de démonstration localStorage : aucun ne doit fuiter en mode connecté.
 const DEMO_MARKERS = [
-  "Chiffre d'Affaires",
   '5 courriers',
+  '8 dossiers',
   '6 dossiers',
   '4 comptes',
-  'Trésorerie Totale Disponible',
-  'MUT-2026-008',
-  'DEP-2026-012',
+  'MUT-04',
   'REV-2026-001',
 ];
 

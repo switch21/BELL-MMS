@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp,
@@ -24,39 +24,77 @@ import {
   INITIAL_EXPENSES,
   STORAGE_KEYS,
 } from '../../lib/storage';
-import { isSupabaseConfigured } from '../../lib/supabase';
-import { PendingSupabaseModule } from '../../components/shared/PendingSupabaseModule';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const DGDashboard: React.FC = () => {
-  if (isSupabaseConfigured) {
-    return (
-      <PendingSupabaseModule
-        title="Tableau de Bord Général — Direction"
-        description="Les indicateurs de ventes, de trésorerie et de patrimoine ne sont pas encore alimentés par Supabase."
-      />
-    );
-  }
+  const [sales, setSales] = useState<Sale[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES)
+  );
+  const [plots, setPlots] = useState<Plot[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS)
+  );
+  const [accounts, setAccounts] = useState<FinancialAccount[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS)
+  );
+  const [expenses, setExpenses] = useState<ExpenseRequest[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<ExpenseRequest[]>(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES)
+  );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    (async () => {
+      const [salesResult, plotsResult, accountsResult, expensesResult] = await Promise.all([
+        supabase.from('sales').select('*').order('sale_date', { ascending: false }),
+        supabase.from('plots').select('*').order('created_at'),
+        supabase.from('financial_accounts').select('*').order('code'),
+        supabase.from('expense_requests').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      for (const result of [salesResult, plotsResult, accountsResult, expensesResult]) {
+        if (result.error) throw result.error;
+      }
+
+      if (!active) return;
+      setSales((salesResult.data ?? []) as Sale[]);
+      setPlots((plotsResult.data ?? []) as Plot[]);
+      setAccounts((accountsResult.data ?? []) as FinancialAccount[]);
+      setExpenses((expensesResult.data ?? []) as ExpenseRequest[]);
+    })()
+      .catch((error: unknown) => {
+        console.error('[Tableau de bord DG] Impossible de charger les indicateurs :', error);
+        if (active) {
+          setDataError('Impossible de charger les indicateurs de direction depuis Supabase. Vérifiez les migrations et vos droits.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // --- Ventes : chiffre d'affaires = somme des final_price des ventes status 'soldee' ---
-  const sales = getStoredData<Sale[]>(STORAGE_KEYS.SALES, INITIAL_SALES);
-  const turnover = sales.filter(s => s.status === 'soldee').reduce((sum, s) => sum + s.final_price, 0);
+  const turnover = sales.filter(s => s.status === 'soldee').reduce((sum, s) => sum + Number(s.final_price), 0);
 
   // --- Parcelles ---
-  const plots = getStoredData<Plot[]>(STORAGE_KEYS.PLOTS, INITIAL_PLOTS);
   const plotsAvailable = plots.filter(p => p.status === 'disponible').length;
   const plotsReserved = plots.filter(p => p.status === 'reservee').length;
   const plotsSold = plots.filter(p => p.status === 'vendue').length;
 
   // --- Trésorerie ---
-  const accounts = getStoredData<FinancialAccount[]>(STORAGE_KEYS.FINANCIAL_ACCOUNTS, INITIAL_FINANCIAL_ACCOUNTS);
-  const cashBalance = accounts.reduce((sum, a) => sum + a.current_balance, 0);
-  const totalCash = accounts.filter(a => a.account_type === 'caisse').reduce((sum, a) => sum + a.current_balance, 0);
-  const totalBanks = accounts.filter(a => a.account_type === 'banque').reduce((sum, a) => sum + a.current_balance, 0);
+  const cashBalance = accounts.reduce((sum, a) => sum + Number(a.current_balance), 0);
+  const totalCash = accounts.filter(a => a.account_type === 'caisse').reduce((sum, a) => sum + Number(a.current_balance), 0);
+  const totalBanks = accounts.filter(a => a.account_type === 'banque').reduce((sum, a) => sum + Number(a.current_balance), 0);
 
   // --- Dépenses en attente d'approbation DG ---
-  const expenses = getStoredData<ExpenseRequest[]>(STORAGE_KEYS.EXPENSE_REQUESTS, INITIAL_EXPENSES);
   const pendingExpenses = expenses.filter(e => e.status === 'en_attente' && e.requires_dg_approval);
-  const pendingExpensesTotal = pendingExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const pendingExpensesTotal = pendingExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
 
   // --- Graphique dynamique : ventes soldées regroupées par mois sur les 6 derniers mois ---
   const chartData = (() => {
@@ -106,6 +144,17 @@ export const DGDashboard: React.FC = () => {
           </Badge>
         </div>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des indicateurs de direction…
+        </p>
+      )}
 
       {/* Cartes KPI Principales */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -228,7 +277,7 @@ export const DGDashboard: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Liste des validations en attente — données réelles depuis localStorage */}
+        {/* Liste des validations en attente — données chargées (Supabase ou démo) */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
