@@ -17,6 +17,15 @@ import {
 } from '../../lib/storage';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
+const describeFunctionError = async (error: unknown): Promise<string> => {
+  const context = (error as { context?: Response }).context;
+  if (context && typeof context.json === 'function') {
+    const body = (await context.json().catch(() => null)) as { error?: string } | null;
+    if (body?.error) return body.error;
+  }
+  return error instanceof Error ? error.message : 'La création du compte a échoué.';
+};
+
 export const UsersPage: React.FC = () => {
   const { usersList, refreshUserData, currentUser } = useAuth();
   const [demoRoles] = useState<UserRole[]>(() =>
@@ -24,6 +33,7 @@ export const UsersPage: React.FC = () => {
   );
   const [connectedRoles, setConnectedRoles] = useState<UserRole[]>([]);
   const [connectedUsers, setConnectedUsers] = useState<UserProfile[]>([]);
+  const [permissionCounts, setPermissionCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [isSaving, setIsSaving] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
@@ -41,23 +51,42 @@ export const UsersPage: React.FC = () => {
   const [jobTitle, setJobTitle] = useState('');
   const [roleId, setRoleId] = useState(demoRoles[3]?.id || '');
   const [isActive, setIsActive] = useState(true);
+  const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
 
   const defaultRoleId = (list: UserRole[]) =>
     list.find((role) => role.code === 'collaborateur')?.id || list[0]?.id || '';
 
   const refreshSupabaseData = async () => {
-    const [profilesResult, rolesResult] = await Promise.all([
+    const [profilesResult, rolesResult, grantsResult] = await Promise.all([
       supabase.from('profiles').select('*, role:roles(*)').order('last_name'),
       supabase.from('roles').select('*').order('name'),
+      supabase.from('role_permissions').select('role_id, permission:permissions(code)'),
     ]);
 
     if (profilesResult.error) throw profilesResult.error;
     if (rolesResult.error) throw rolesResult.error;
+    if (grantsResult.error) throw grantsResult.error;
 
     const loadedRoles = (rolesResult.data ?? []) as UserRole[];
     setConnectedRoles(loadedRoles);
     setConnectedUsers((profilesResult.data ?? []) as UserProfile[]);
+
+    const counts: Record<string, number> = {};
+    for (const grant of (grantsResult.data ?? []) as unknown as Array<{
+      role_id: string;
+      permission?: { code: string } | null;
+    }>) {
+      if (!grant.role_id || !grant.permission?.code) continue;
+      counts[grant.role_id] = (counts[grant.role_id] ?? 0) + 1;
+    }
+    setPermissionCounts(counts);
     setRoleId((current) => current || defaultRoleId(loadedRoles));
+  };
+
+  const resetPasswordFields = () => {
+    setPassword('');
+    setPasswordConfirm('');
   };
 
   useEffect(() => {
@@ -90,6 +119,7 @@ export const UsersPage: React.FC = () => {
     setJobTitle('');
     setRoleId(defaultRoleId(roles));
     setIsActive(true);
+    resetPasswordFields();
     setIsModalOpen(true);
   };
 
@@ -102,6 +132,7 @@ export const UsersPage: React.FC = () => {
     setJobTitle(user.job_title || '');
     setRoleId(user.role_id);
     setIsActive(user.is_active);
+    resetPasswordFields();
     setIsModalOpen(true);
   };
 
@@ -112,27 +143,52 @@ export const UsersPage: React.FC = () => {
     if (isSupabaseConfigured) {
       setIsSaving(true);
       try {
-        if (!selectedUser) {
-          throw new Error('La création de compte requiert l’Edge Function d’administration (service_role).');
+        if (selectedUser) {
+          const { error } = await supabase
+            .from('profiles')
+            .update({
+              first_name: firstName,
+              last_name: lastName,
+              phone,
+              job_title: jobTitle,
+              role_id: roleId,
+              is_active: isActive,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', selectedUser.id);
+          if (error) throw error;
+        } else {
+          if (password.length < 8) {
+            throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
+          }
+          if (password !== passwordConfirm) {
+            throw new Error('Les mots de passe ne correspondent pas.');
+          }
+
+          const { data, error } = await supabase.functions.invoke('admin-create-user', {
+            body: {
+              email,
+              password,
+              first_name: firstName,
+              last_name: lastName,
+              phone,
+              job_title: jobTitle,
+              role_id: roleId,
+              is_active: isActive,
+            },
+          });
+          if (error) throw new Error(await describeFunctionError(error));
+          if (!data?.profile) {
+            throw new Error('L’Edge Function n’a retourné aucun profil créé.');
+          }
         }
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            first_name: firstName,
-            last_name: lastName,
-            phone,
-            job_title: jobTitle,
-            role_id: roleId,
-            is_active: isActive,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', selectedUser.id);
-        if (error) throw error;
+
         await refreshSupabaseData();
         setIsModalOpen(false);
+        resetPasswordFields();
       } catch (error) {
-        console.error('[Utilisateurs] Échec de mise à jour du profil :', error);
-        setDataError(error instanceof Error ? error.message : 'La mise à jour du profil a échoué.');
+        console.error('[Utilisateurs] Échec de l’enregistrement du compte :', error);
+        setDataError(error instanceof Error ? error.message : 'L’enregistrement du compte a échoué.');
       } finally {
         setIsSaving(false);
       }
@@ -219,14 +275,7 @@ export const UsersPage: React.FC = () => {
             Comptes d'accès, affectations des rôles officiels et matrice des privilèges
           </p>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={handleOpenCreateModal}
-          disabled={isSupabaseConfigured}
-          title={isSupabaseConfigured ? 'La création de compte passe par l’Edge Function d’administration (service_role).' : undefined}
-          className="gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+        <Button variant="primary" size="sm" onClick={handleOpenCreateModal} className="gap-1.5">
           <Plus className="w-4 h-4" />
           Ajouter un Collaborateur
         </Button>
@@ -244,8 +293,9 @@ export const UsersPage: React.FC = () => {
       )}
       {isSupabaseConfigured && (
         <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
-          Les profils et rôles sont lus depuis Supabase. La création de nouveaux comptes passe par l’Edge Function
-          d’administration (<span className="font-mono">service_role</span>).
+          Les profils et rôles sont lus depuis Supabase. La création de comptes passe par l’Edge Function
+          <span className="font-mono"> admin-create-user </span>
+          (<span className="font-mono">service_role</span>) ; l’édition des profils est directe.
         </div>
       )}
 
@@ -348,7 +398,9 @@ export const UsersPage: React.FC = () => {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {roles.map((role) => {
-              const perms = ROLE_PERMISSIONS_MAP[role.code] || [];
+              const permissionCount = isSupabaseConfigured
+                ? permissionCounts[role.id] ?? 0
+                : (ROLE_PERMISSIONS_MAP[role.code] || []).length;
               return (
                 <div
                   key={role.id}
@@ -359,7 +411,7 @@ export const UsersPage: React.FC = () => {
                       {role.name}
                     </h3>
                     <Badge variant="emerald" size="sm">
-                      {perms.length} droits
+                      {permissionCount} droits
                     </Badge>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-executive-darkMuted leading-relaxed">
@@ -377,7 +429,11 @@ export const UsersPage: React.FC = () => {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={selectedUser ? "Modifier les accès d'un utilisateur" : "Créer un nouveau compte"}
-        description="Les modifications de rôles sont automatiquement enregistrées dans le journal d'audit."
+        description={
+          selectedUser || !isSupabaseConfigured
+            ? "Les modifications de rôles sont automatiquement enregistrées dans le journal d'audit."
+            : "Le compte Auth et son profil sont créés via l’Edge Function d’administration."
+        }
       >
         <form onSubmit={handleSaveUser} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
@@ -400,10 +456,34 @@ export const UsersPage: React.FC = () => {
             type="email"
             required
             value={email}
-            disabled={isSupabaseConfigured}
-            helperText={isSupabaseConfigured ? 'L’adresse email est gérée dans Supabase Auth.' : undefined}
+            disabled={isSupabaseConfigured && Boolean(selectedUser)}
+            helperText={
+              isSupabaseConfigured && selectedUser
+                ? 'L’adresse email est gérée dans Supabase Auth.'
+                : undefined
+            }
             onChange={(e) => setEmail(e.target.value)}
           />
+
+          {isSupabaseConfigured && !selectedUser && (
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label="Mot de passe initial"
+                type="password"
+                required
+                value={password}
+                helperText="8 caractères minimum"
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <Input
+                label="Confirmer le mot de passe"
+                type="password"
+                required
+                value={passwordConfirm}
+                onChange={(e) => setPasswordConfirm(e.target.value)}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <Input

@@ -11,6 +11,9 @@ const mockDb = vi.hoisted(() => {
     errors: {} as Record<string, { message: string } | null>,
     updates: [] as Array<{ table: string; payload: any }>,
     queries: [] as Array<{ table: string; method: string; args: any[] }>,
+    invokeCalls: [] as Array<{ fn: string; options: any }>,
+    invokeData: null as any,
+    invokeError: null as any,
   };
 
   const makeBuilder = (table: string) => {
@@ -48,13 +51,19 @@ const mockDb = vi.hoisted(() => {
 
   const from = vi.fn((table: string) => makeBuilder(table));
   const rpc = vi.fn(() => Promise.resolve({ data: null, error: null }));
+  const functions = {
+    invoke: vi.fn((fn: string, options: any) => {
+      state.invokeCalls.push({ fn, options });
+      return Promise.resolve({ data: state.invokeData, error: state.invokeError });
+    }),
+  };
 
-  return { state, from, rpc };
+  return { state, from, rpc, functions };
 });
 
 vi.mock('../lib/supabase', () => ({
   isSupabaseConfigured: true,
-  supabase: { from: mockDb.from, rpc: mockDb.rpc },
+  supabase: { from: mockDb.from, rpc: mockDb.rpc, functions: mockDb.functions },
 }));
 
 vi.mock('../context/AuthContext', () => ({
@@ -102,6 +111,15 @@ const ROLES = [
   { id: 'role-super', code: 'super_admin', name: 'Super Administrateur', description: 'Maintenance technique', is_system: true },
 ];
 
+const ROLE_GRANTS = [
+  { role_id: 'role-dg', permission: { code: 'land:read' } },
+  { role_id: 'role-collab', permission: { code: 'land:read' } },
+  { role_id: 'role-collab', permission: { code: 'land:write' } },
+  { role_id: 'role-super', permission: { code: 'land:read' } },
+  { role_id: 'role-super', permission: { code: 'land:write' } },
+  { role_id: 'role-super', permission: { code: 'admin:users:manage' } },
+];
+
 const AUDIT_LOGS = [
   {
     id: 'log-1',
@@ -134,6 +152,9 @@ beforeEach(() => {
   mockDb.state.errors = {};
   mockDb.state.updates = [];
   mockDb.state.queries = [];
+  mockDb.state.invokeCalls = [];
+  mockDb.state.invokeData = { profile: { id: 'u-new' } };
+  mockDb.state.invokeError = null;
   localStorage.clear();
 });
 
@@ -194,7 +215,7 @@ describe('UsersPage en mode connecté', () => {
     });
   });
 
-  it('affiche une erreur de chargement et désactive la création de compte', async () => {
+  it('affiche une erreur de chargement sans masquer le formulaire de création', async () => {
     mockDb.state.tables = { profiles: [], roles: [] };
     mockDb.state.errors = { profiles: { message: 'permission denied' } };
 
@@ -203,8 +224,127 @@ describe('UsersPage en mode connecté', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Impossible de charger les utilisateurs depuis Supabase'
     );
-    expect(screen.getByRole('button', { name: /Ajouter un Collaborateur/ })).toBeDisabled();
-    expect(screen.getByText(/Edge Function/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Ajouter un Collaborateur/ })).toBeEnabled();
+    expect(screen.getByText(/admin-create-user/)).toBeInTheDocument();
+  });
+
+  it('crée un compte via l’Edge Function avec le mot de passe saisi', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getByRole('button', { name: /Ajouter un Collaborateur/ }));
+    fireEvent.change(screen.getByLabelText('Prénom'), { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText('Nom de famille'), { target: { value: 'MBALLA' } });
+    fireEvent.change(screen.getByLabelText('Adresse Email'), {
+      target: { value: 'alice.mballa@bell-mms.local' },
+    });
+    fireEvent.change(screen.getByLabelText('Mot de passe initial'), {
+      target: { value: 'motdepasse123' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'motdepasse123' },
+    });
+    fireEvent.change(screen.getByLabelText('Téléphone (Cameroun)'), {
+      target: { value: '+237 699777888' },
+    });
+    fireEvent.change(screen.getByLabelText('Fonction / Poste'), {
+      target: { value: 'Chargée de clientèle' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    await waitFor(() => expect(mockDb.state.invokeCalls).toHaveLength(1));
+
+    expect(mockDb.state.invokeCalls[0]).toEqual({
+      fn: 'admin-create-user',
+      options: {
+        body: {
+          email: 'alice.mballa@bell-mms.local',
+          password: 'motdepasse123',
+          first_name: 'Alice',
+          last_name: 'MBALLA',
+          phone: '+237 699777888',
+          job_title: 'Chargée de clientèle',
+          role_id: 'role-collab',
+          is_active: true,
+        },
+      },
+    });
+    expect(mockDb.state.updates).toHaveLength(0);
+  });
+
+  it('refuse un mot de passe trop court sans appeler l’Edge Function', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getByRole('button', { name: /Ajouter un Collaborateur/ }));
+    fireEvent.change(screen.getByLabelText('Prénom'), { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText('Nom de famille'), { target: { value: 'MBALLA' } });
+    fireEvent.change(screen.getByLabelText('Adresse Email'), {
+      target: { value: 'alice.mballa@bell-mms.local' },
+    });
+    fireEvent.change(screen.getByLabelText('Mot de passe initial'), {
+      target: { value: 'court' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'court' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Le mot de passe doit contenir au moins 8 caractères.'
+    );
+    expect(mockDb.state.invokeCalls).toHaveLength(0);
+  });
+
+  it('affiche le refus renvoyé par l’Edge Function', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+    mockDb.state.invokeError = {
+      message: 'Edge Function returned a non-2xx status code',
+      context: { json: async () => ({ error: 'Un compte existe déjà pour cette adresse email.' }) },
+    };
+    mockDb.state.invokeData = null;
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getByRole('button', { name: /Ajouter un Collaborateur/ }));
+    fireEvent.change(screen.getByLabelText('Prénom'), { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText('Nom de famille'), { target: { value: 'MBALLA' } });
+    fireEvent.change(screen.getByLabelText('Adresse Email'), {
+      target: { value: 'alice.mballa@bell-mms.local' },
+    });
+    fireEvent.change(screen.getByLabelText('Mot de passe initial'), {
+      target: { value: 'motdepasse123' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'motdepasse123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Un compte existe déjà pour cette adresse email.'
+    );
+    expect(mockDb.state.invokeCalls).toHaveLength(1);
+  });
+
+  it('compte les droits réels par rôle depuis role_permissions', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES, role_permissions: ROLE_GRANTS };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    expect(screen.getByText('1 droits')).toBeInTheDocument();
+    expect(screen.getByText('2 droits')).toBeInTheDocument();
+    expect(screen.getByText('3 droits')).toBeInTheDocument();
+    expect(mockDb.state.queries).toContainEqual({
+      table: 'role_permissions',
+      method: 'select',
+      args: ['role_id, permission:permissions(code)'],
+    });
   });
 });
 
