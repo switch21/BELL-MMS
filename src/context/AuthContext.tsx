@@ -129,6 +129,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Journalise la connexion côté serveur : le client ne peut pas écrire dans audit_logs.
+  const logSupabaseLogin = async (): Promise<void> => {
+    try {
+      const { error } = await supabase.rpc('log_login_event');
+      if (error) {
+        console.warn('[Supabase] Journalisation de connexion indisponible :', error.message);
+      }
+    } catch (err) {
+      console.warn('[Supabase] Journalisation de connexion indisponible :', err);
+    }
+  };
+
   // Résolution du code de rôle
   const currentRole: UserRoleCode | null = (currentUser?.role?.code as UserRoleCode) || null;
 
@@ -166,17 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         await fetchAndAttachSupabaseProfile(data.user.id);
 
-        logAuditEvent({
-          user_id: data.user.id,
-          user_email: data.user.email ?? email,
-          action: 'LOGIN',
-          module: 'AUTH',
-          entity_name: 'session',
-          entity_id: data.user.id,
-          old_values: null,
-          new_values: { email, timestamp: new Date().toISOString(), mode: 'supabase' },
-          ip_address: '127.0.0.1',
-        });
+        await logSupabaseLogin();
 
         return true;
       } catch (err) {
