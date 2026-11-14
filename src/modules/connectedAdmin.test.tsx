@@ -225,7 +225,6 @@ describe('UsersPage en mode connecté', () => {
       'Impossible de charger les utilisateurs depuis Supabase'
     );
     expect(screen.getByRole('button', { name: /Ajouter un Collaborateur/ })).toBeEnabled();
-    expect(screen.getByText(/admin-create-user/)).toBeInTheDocument();
   });
 
   it('crée un compte via l’Edge Function avec le mot de passe saisi', async () => {

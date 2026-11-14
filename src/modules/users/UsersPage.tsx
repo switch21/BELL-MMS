@@ -291,13 +291,6 @@ export const UsersPage: React.FC = () => {
           Chargement des utilisateurs…
         </p>
       )}
-      {isSupabaseConfigured && (
-        <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
-          Les profils et rôles sont lus depuis Supabase. La création de comptes passe par l’Edge Function
-          <span className="font-mono"> admin-create-user </span>
-          (<span className="font-mono">service_role</span>) ; l’édition des profils est directe.
-        </div>
-      )}
 
       {/* Tableau des utilisateurs */}
       <Card>
