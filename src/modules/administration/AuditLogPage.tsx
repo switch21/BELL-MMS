@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { History, Search, Shield, Filter, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
@@ -6,14 +6,48 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { AuditLogEntry } from '../../types/auth.types';
 import { getStoredData, STORAGE_KEYS } from '../../lib/storage';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { formatDateTime } from '../../lib/utils';
 
 export const AuditLogPage: React.FC = () => {
-  const [logs] = useState<AuditLogEntry[]>(() =>
-    getStoredData<AuditLogEntry[]>(STORAGE_KEYS.AUDIT_LOGS, [])
+  const [logs, setLogs] = useState<AuditLogEntry[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData<AuditLogEntry[]>(STORAGE_KEYS.AUDIT_LOGS, [])
   );
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    const loadLogs = async () => {
+      setIsLoading(true);
+      setDataError(null);
+      try {
+        const { data, error } = await supabase
+          .from('audit_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(500);
+        if (error) throw error;
+        if (active) setLogs((data ?? []) as AuditLogEntry[]);
+      } catch (error) {
+        console.error('[Supabase] Impossible de charger le journal d’audit :', error);
+        if (active) {
+          setDataError('Impossible de charger le journal d’audit depuis Supabase. Vérifiez la connexion et vos droits.');
+        }
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    };
+
+    void loadLogs();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filteredLogs = logs.filter((log) => {
     const term = searchTerm.toLowerCase();
@@ -54,6 +88,17 @@ export const AuditLogPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement du journal d’audit…
+        </p>
+      )}
 
       {/* Barre de recherche & filtres */}
       <Card>

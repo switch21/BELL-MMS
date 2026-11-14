@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SETTINGS,
   getStoredData,
@@ -11,6 +11,11 @@ import {
   STORAGE_KEYS,
 } from './storage';
 import type { AuditLogEntry } from '../types/auth.types';
+
+vi.mock('./supabase', () => ({
+  isSupabaseConfigured: false,
+  supabase: {},
+}));
 
 const buildAuditEntry = (index: number): AuditLogEntry => ({
   id: `old-${index}`,

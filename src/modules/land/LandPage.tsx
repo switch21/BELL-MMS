@@ -436,6 +436,17 @@ export const LandPage: React.FC = () => {
         )}
       </div>
 
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement du patrimoine foncier…
+        </p>
+      )}
+
       {/* Sélecteur de Domaine Foncier */}
       <div className="flex flex-wrap gap-2">
         {landProperties.map((land) => (

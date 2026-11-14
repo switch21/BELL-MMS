@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Users, Plus, Shield, Check, X, Edit2, Lock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -15,12 +15,23 @@ import {
   setStoredData,
   STORAGE_KEYS,
 } from '../../lib/storage';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export const UsersPage: React.FC = () => {
   const { usersList, refreshUserData, currentUser } = useAuth();
-  const [roles] = useState<UserRole[]>(() => getStoredData(STORAGE_KEYS.ROLES, DEFAULT_ROLES));
+  const [demoRoles] = useState<UserRole[]>(() =>
+    isSupabaseConfigured ? [] : getStoredData(STORAGE_KEYS.ROLES, DEFAULT_ROLES)
+  );
+  const [connectedRoles, setConnectedRoles] = useState<UserRole[]>([]);
+  const [connectedUsers, setConnectedUsers] = useState<UserProfile[]>([]);
+  const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+
+  const roles = isSupabaseConfigured ? connectedRoles : demoRoles;
+  const users = isSupabaseConfigured ? connectedUsers : usersList;
 
   // Formulaire d'ajout / modification d'utilisateur
   const [firstName, setFirstName] = useState('');
@@ -28,8 +39,47 @@ export const UsersPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [jobTitle, setJobTitle] = useState('');
-  const [roleId, setRoleId] = useState(roles[3]?.id || '');
+  const [roleId, setRoleId] = useState(demoRoles[3]?.id || '');
   const [isActive, setIsActive] = useState(true);
+
+  const defaultRoleId = (list: UserRole[]) =>
+    list.find((role) => role.code === 'collaborateur')?.id || list[0]?.id || '';
+
+  const refreshSupabaseData = async () => {
+    const [profilesResult, rolesResult] = await Promise.all([
+      supabase.from('profiles').select('*, role:roles(*)').order('last_name'),
+      supabase.from('roles').select('*').order('name'),
+    ]);
+
+    if (profilesResult.error) throw profilesResult.error;
+    if (rolesResult.error) throw rolesResult.error;
+
+    const loadedRoles = (rolesResult.data ?? []) as UserRole[];
+    setConnectedRoles(loadedRoles);
+    setConnectedUsers((profilesResult.data ?? []) as UserProfile[]);
+    setRoleId((current) => current || defaultRoleId(loadedRoles));
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let active = true;
+    setIsLoading(true);
+    refreshSupabaseData()
+      .catch((error: unknown) => {
+        console.error('[Supabase] Impossible de charger les utilisateurs :', error);
+        if (active) {
+          setDataError('Impossible de charger les utilisateurs depuis Supabase. Vérifiez la connexion, les migrations et vos droits.');
+        }
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleOpenCreateModal = () => {
     setSelectedUser(null);
@@ -38,7 +88,7 @@ export const UsersPage: React.FC = () => {
     setEmail('');
     setPhone('+237 ');
     setJobTitle('');
-    setRoleId(roles[3]?.id || '');
+    setRoleId(defaultRoleId(roles));
     setIsActive(true);
     setIsModalOpen(true);
   };
@@ -55,8 +105,40 @@ export const UsersPage: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    setDataError(null);
+
+    if (isSupabaseConfigured) {
+      setIsSaving(true);
+      try {
+        if (!selectedUser) {
+          throw new Error('La création de compte requiert l’Edge Function d’administration (service_role).');
+        }
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            first_name: firstName,
+            last_name: lastName,
+            phone,
+            job_title: jobTitle,
+            role_id: roleId,
+            is_active: isActive,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', selectedUser.id);
+        if (error) throw error;
+        await refreshSupabaseData();
+        setIsModalOpen(false);
+      } catch (error) {
+        console.error('[Utilisateurs] Échec de mise à jour du profil :', error);
+        setDataError(error instanceof Error ? error.message : 'La mise à jour du profil a échoué.');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     const currentUsers = getStoredData<UserProfile[]>(STORAGE_KEYS.USERS, []);
 
     if (selectedUser) {
@@ -137,11 +219,35 @@ export const UsersPage: React.FC = () => {
             Comptes d'accès, affectations des rôles officiels et matrice des privilèges
           </p>
         </div>
-        <Button variant="primary" size="sm" onClick={handleOpenCreateModal} className="gap-1.5">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleOpenCreateModal}
+          disabled={isSupabaseConfigured}
+          title={isSupabaseConfigured ? 'La création de compte passe par l’Edge Function d’administration (service_role).' : undefined}
+          className="gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           <Plus className="w-4 h-4" />
           Ajouter un Collaborateur
         </Button>
       </div>
+
+      {dataError && (
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+          {dataError}
+        </div>
+      )}
+      {isLoading && (
+        <p role="status" className="text-xs text-slate-500 dark:text-executive-darkMuted">
+          Chargement des utilisateurs…
+        </p>
+      )}
+      {isSupabaseConfigured && (
+        <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+          Les profils et rôles sont lus depuis Supabase. La création de nouveaux comptes passe par l’Edge Function
+          d’administration (<span className="font-mono">service_role</span>).
+        </div>
+      )}
 
       {/* Tableau des utilisateurs */}
       <Card>
@@ -165,7 +271,14 @@ export const UsersPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-executive-darkBorder">
-                {usersList.map((user) => {
+                {users.length === 0 && !isLoading && (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-400">
+                      Aucun profil utilisateur disponible.
+                    </td>
+                  </tr>
+                )}
+                {users.map((user) => {
                   const userRole = roles.find((r) => r.id === user.role_id);
                   return (
                     <tr
@@ -287,6 +400,8 @@ export const UsersPage: React.FC = () => {
             type="email"
             required
             value={email}
+            disabled={isSupabaseConfigured}
+            helperText={isSupabaseConfigured ? 'L’adresse email est gérée dans Supabase Auth.' : undefined}
             onChange={(e) => setEmail(e.target.value)}
           />
 
@@ -339,7 +454,7 @@ export const UsersPage: React.FC = () => {
             <Button type="button" variant="outline" size="sm" onClick={() => setIsModalOpen(false)}>
               Annuler
             </Button>
-            <Button type="submit" variant="primary" size="sm">
+            <Button type="submit" variant="primary" size="sm" isLoading={isSaving}>
               Enregistrer les modifications
             </Button>
           </div>

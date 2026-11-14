@@ -3,6 +3,7 @@ import { Client, Partner, LandProperty, Subdivision, Block, Plot, PlotStatusHist
 import { Reservation, Sale, PaymentSchedule, Receipt, ThirdPartySettlement } from '../types/sales.types';
 import { ServiceType, ServiceCase, FinancingCase } from '../types/services.types';
 import { FinancialAccount, FinancialCategory, ExpenseRequest, FinancialTransaction, FinancialTransfer, CashClosure } from '../types/finance.types';
+import { isSupabaseConfigured } from './supabase';
 
 export const STORAGE_KEYS = {
   SETTINGS: 'bell_mms_app_settings',
@@ -339,6 +340,8 @@ export const initLocalDatabase = () => {
 };
 
 export const logAuditEvent = (entry: Omit<AuditLogEntry, 'id' | 'created_at'>) => {
+  if (isSupabaseConfigured) return;
+
   const logs = getStoredData<AuditLogEntry[]>(STORAGE_KEYS.AUDIT_LOGS, []);
   const newEntry: AuditLogEntry = {
     ...entry,
