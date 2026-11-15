@@ -17,13 +17,13 @@ import {
 } from '../../lib/storage';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
-const describeFunctionError = async (error: unknown): Promise<string> => {
+const describeFunctionError = async (error: unknown, fallback: string): Promise<string> => {
   const context = (error as { context?: Response }).context;
   if (context && typeof context.json === 'function') {
     const body = (await context.json().catch(() => null)) as { error?: string } | null;
     if (body?.error) return body.error;
   }
-  return error instanceof Error ? error.message : 'La création du compte a échoué.';
+  return error instanceof Error ? error.message : fallback;
 };
 
 export const UsersPage: React.FC = () => {
@@ -143,32 +143,33 @@ export const UsersPage: React.FC = () => {
     if (isSupabaseConfigured) {
       setIsSaving(true);
       try {
+        if (password && password.length < 8) {
+          throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
+        }
+        if (password && password !== passwordConfirm) {
+          throw new Error('Les mots de passe ne correspondent pas.');
+        }
+
         if (selectedUser) {
-          const { data, error } = await supabase
-            .from('profiles')
-            .update({
+          const { data, error } = await supabase.functions.invoke('admin-update-user', {
+            body: {
+              user_id: selectedUser.id,
               first_name: firstName,
               last_name: lastName,
               phone,
               job_title: jobTitle,
               role_id: roleId,
               is_active: isActive,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', selectedUser.id)
-            .select('id');
-          if (error) throw error;
-          if (!data || data.length === 0) {
-            throw new Error(
-              'Aucune ligne modifiée : compte introuvable ou droit « admin:users:manage » insuffisant pour ce rôle.'
-            );
+              password: password || null,
+            },
+          });
+          if (error) throw new Error(await describeFunctionError(error, 'La modification du compte a échoué.'));
+          if (!data?.profile) {
+            throw new Error('L’Edge Function n’a retourné aucun profil modifié.');
           }
         } else {
-          if (password.length < 8) {
+          if (!password) {
             throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
-          }
-          if (password !== passwordConfirm) {
-            throw new Error('Les mots de passe ne correspondent pas.');
           }
 
           const { data, error } = await supabase.functions.invoke('admin-create-user', {
@@ -183,7 +184,7 @@ export const UsersPage: React.FC = () => {
               is_active: isActive,
             },
           });
-          if (error) throw new Error(await describeFunctionError(error));
+          if (error) throw new Error(await describeFunctionError(error, 'La création du compte a échoué.'));
           if (!data?.profile) {
             throw new Error('L’Edge Function n’a retourné aucun profil créé.');
           }
@@ -429,9 +430,11 @@ export const UsersPage: React.FC = () => {
         onClose={() => setIsModalOpen(false)}
         title={selectedUser ? "Modifier les accès d'un utilisateur" : "Créer un nouveau compte"}
         description={
-          selectedUser || !isSupabaseConfigured
+          !isSupabaseConfigured
             ? "Les modifications de rôles sont automatiquement enregistrées dans le journal d'audit."
-            : "Le compte Auth et son profil sont créés via l’Edge Function d’administration."
+            : selectedUser
+              ? 'Mot de passe et accès sont portés au compte Auth via l’Edge Function d’administration.'
+              : 'Le compte Auth et son profil sont créés via l’Edge Function d’administration.'
         }
       >
         <form onSubmit={handleSaveUser} className="space-y-4">
@@ -464,20 +467,26 @@ export const UsersPage: React.FC = () => {
             onChange={(e) => setEmail(e.target.value)}
           />
 
-          {isSupabaseConfigured && !selectedUser && (
+          {isSupabaseConfigured && (
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="Mot de passe initial"
+                label={selectedUser ? 'Nouveau mot de passe' : 'Mot de passe initial'}
                 type="password"
-                required
+                required={!selectedUser}
+                autoComplete="new-password"
                 value={password}
-                helperText="8 caractères minimum"
+                helperText={
+                  selectedUser
+                    ? 'Laisser vide pour conserver le mot de passe actuel'
+                    : '8 caractères minimum'
+                }
                 onChange={(e) => setPassword(e.target.value)}
               />
               <Input
                 label="Confirmer le mot de passe"
                 type="password"
-                required
+                required={!selectedUser}
+                autoComplete="new-password"
                 value={passwordConfirm}
                 onChange={(e) => setPasswordConfirm(e.target.value)}
               />

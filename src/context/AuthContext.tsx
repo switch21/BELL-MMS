@@ -102,7 +102,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Récupère le profil depuis la table `profiles` Supabase et met à jour l'état
-  const fetchAndAttachSupabaseProfile = async (userId: string): Promise<void> => {
+  // Un profil inactif ne reçoit jamais de session côté interface : la session est invalidée.
+  const fetchAndAttachSupabaseProfile = async (userId: string): Promise<'active' | 'inactive' | 'error'> => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -113,7 +114,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (error) {
         console.error('[Supabase] Erreur récupération profil :', error.message);
         setCurrentUser(null);
-        return;
+        return 'error';
+      }
+
+      if (!data.is_active) {
+        setCurrentUser(null);
+        await supabase.auth.signOut();
+        return 'inactive';
       }
 
       const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -123,9 +130,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setCurrentUser({ ...data, email: authData.user.email ?? '' } as UserProfile);
+      return 'active';
     } catch (err) {
       console.error('[Supabase] Exception fetchAndAttachSupabaseProfile :', err);
       setCurrentUser(null);
+      return 'error';
     }
   };
 
@@ -176,7 +185,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw new Error(error?.message || 'Identifiants invalides.');
         }
 
-        await fetchAndAttachSupabaseProfile(data.user.id);
+        const profileState = await fetchAndAttachSupabaseProfile(data.user.id);
+        if (profileState === 'inactive') {
+          throw new Error("Ce compte utilisateur a été désactivé par l'administration.");
+        }
 
         await logSupabaseLogin();
 

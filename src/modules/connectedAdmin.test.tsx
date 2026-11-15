@@ -10,7 +10,6 @@ const mockDb = vi.hoisted(() => {
     tables: {} as Record<string, any[]>,
     errors: {} as Record<string, { message: string } | null>,
     updates: [] as Array<{ table: string; payload: any }>,
-    updateResults: {} as Record<string, any[]>,
     queries: [] as Array<{ table: string; method: string; args: any[] }>,
     invokeCalls: [] as Array<{ fn: string; options: any }>,
     invokeData: null as any,
@@ -19,7 +18,6 @@ const mockDb = vi.hoisted(() => {
 
   const makeBuilder = (table: string) => {
     const builder: any = {};
-    let isUpdate = false;
     const record = (method: string) => (...args: any[]) => {
       state.queries.push({ table, method, args });
       return builder;
@@ -34,14 +32,13 @@ const mockDb = vi.hoisted(() => {
     builder.order = record('order');
     builder.limit = record('limit');
     builder.update = (payload: any) => {
-      isUpdate = true;
       state.updates.push({ table, payload });
       state.queries.push({ table, method: 'update', args: [payload] });
       return builder;
     };
 
     builder.then = (onFulfilled: any, onRejected: any) => {
-      const rows = (isUpdate ? state.updateResults[table] : undefined) ?? state.tables[table] ?? [];
+      const rows = state.tables[table] ?? [];
       return Promise.resolve({
         data: rows,
         error: state.errors[table] ?? null,
@@ -154,7 +151,6 @@ beforeEach(() => {
   mockDb.state.tables = {};
   mockDb.state.errors = {};
   mockDb.state.updates = [];
-  mockDb.state.updateResults = {};
   mockDb.state.queries = [];
   mockDb.state.invokeCalls = [];
   mockDb.state.invokeData = { profile: { id: 'u-new' } };
@@ -186,7 +182,7 @@ describe('UsersPage en mode connecté', () => {
     expect(screen.queryByText('Aucun profil utilisateur disponible.')).not.toBeInTheDocument();
   });
 
-  it('enregistre les modifications de profil sans toucher à l’email', async () => {
+  it('modifie un compte existant via l’Edge Function, sans toucher à l’email ni au mot de passe', async () => {
     mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
 
     render(<UsersPage />);
@@ -200,28 +196,109 @@ describe('UsersPage en mode connecté', () => {
     fireEvent.click(screen.getByLabelText(/Compte actif/));
     fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
 
-    await waitFor(() => expect(mockDb.state.updates).toHaveLength(1));
+    await waitFor(() => expect(mockDb.state.invokeCalls).toHaveLength(1));
 
-    expect(mockDb.state.updates[0].table).toBe('profiles');
-    expect(mockDb.state.updates[0].payload).toMatchObject({
-      first_name: 'Emmanuel',
-      last_name: 'FOTSO',
-      phone: '+237 699111222',
-      job_title: 'Directeur Général',
-      role_id: 'role-dg',
-      is_active: false,
+    expect(mockDb.state.invokeCalls[0]).toEqual({
+      fn: 'admin-update-user',
+      options: {
+        body: {
+          user_id: 'u1',
+          first_name: 'Emmanuel',
+          last_name: 'FOTSO',
+          phone: '+237 699111222',
+          job_title: 'Directeur Général',
+          role_id: 'role-dg',
+          is_active: false,
+          password: null,
+        },
+      },
     });
-    expect(mockDb.state.updates[0].payload.email).toBeUndefined();
-    expect(mockDb.state.queries).toContainEqual({
-      table: 'profiles',
-      method: 'eq',
-      args: ['id', 'u1'],
-    });
+    expect(mockDb.state.updates).toHaveLength(0);
   });
 
-  it('signale une modification qui ne touche aucune ligne au lieu de la déclarer réussie', async () => {
+  it('porte un nouveau mot de passe sur le compte existant', async () => {
     mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
-    mockDb.state.updateResults = { profiles: [] };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+    fireEvent.change(screen.getByLabelText('Nouveau mot de passe'), {
+      target: { value: 'nouveau123' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'nouveau123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    await waitFor(() => expect(mockDb.state.invokeCalls).toHaveLength(1));
+    expect(mockDb.state.invokeCalls[0].options.body.password).toBe('nouveau123');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('refuse une modification dont les mots de passe ne concordent pas, sans appeler la fonction', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+    fireEvent.change(screen.getByLabelText('Nouveau mot de passe'), {
+      target: { value: 'nouveau123' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'autre12345' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Les mots de passe ne correspondent pas.'
+    );
+    expect(mockDb.state.invokeCalls).toHaveLength(0);
+  });
+
+  it('refuse un mot de passe de modification trop court sans appeler la fonction', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+    fireEvent.change(screen.getByLabelText('Nouveau mot de passe'), { target: { value: 'court' } });
+    fireEvent.change(screen.getByLabelText('Confirmer le mot de passe'), {
+      target: { value: 'court' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Le mot de passe doit contenir au moins 8 caractères.'
+    );
+    expect(mockDb.state.invokeCalls).toHaveLength(0);
+  });
+
+  it('signale une modification que la fonction ne confirme par un profil', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+    mockDb.state.invokeData = { auth_actions: ['password'] };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'L’Edge Function n’a retourné aucun profil modifié.'
+    );
+    expect(screen.getByRole('button', { name: /Annuler/ })).toBeInTheDocument();
+  });
+
+  it('affiche le refus renvoyé par la fonction de modification', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+    mockDb.state.invokeData = null;
+    mockDb.state.invokeError = {
+      message: 'Edge Function returned a non-2xx status code',
+      context: { json: async () => ({ error: 'Impossible de suspendre votre propre compte.' }) },
+    };
 
     render(<UsersPage />);
     await screen.findByText('Emmanuel FOTSO');
@@ -230,10 +307,10 @@ describe('UsersPage en mode connecté', () => {
     fireEvent.click(screen.getByLabelText(/Compte actif/));
     fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Aucune ligne modifiée');
-    expect(screen.getByRole('button', { name: /Annuler/ })).toBeInTheDocument();
-    // Le comptage des lignes passe par la relecture des identifiants : sans select, 0 ligne est invisible.
-    expect(mockDb.state.queries).toContainEqual({ table: 'profiles', method: 'select', args: ['id'] });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Impossible de suspendre votre propre compte.'
+    );
+    expect(mockDb.state.invokeCalls).toHaveLength(1);
   });
 
   it('affiche une erreur de chargement sans masquer le formulaire de création', async () => {

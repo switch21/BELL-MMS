@@ -7,6 +7,8 @@ const mock = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args?: unknown }>,
   rpcError: null as { message: string } | null,
   signInError: null as { message: string } | null,
+  signOutCalls: 0,
+  session: null as { user: { id: string } } | null,
   profile: {
     id: 'u-dg',
     first_name: 'Emmanuel',
@@ -22,7 +24,7 @@ vi.mock('../lib/supabase', () => ({
   isSupabaseConfigured: true,
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: null } }),
+      getSession: async () => ({ data: { session: mock.session } }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
       signInWithPassword: async ({ email }: { email: string }) => {
         if (mock.signInError) {
@@ -34,7 +36,10 @@ vi.mock('../lib/supabase', () => ({
         data: { user: { id: 'u-dg', email: 'dg@bell-mms.cm' } },
         error: null,
       }),
-      signOut: async () => ({ error: null }),
+      signOut: async () => {
+        mock.signOutCalls += 1;
+        return { error: null };
+      },
     },
     from: () => ({
       select: () => ({
@@ -70,6 +75,8 @@ beforeEach(() => {
   mock.rpcCalls = [];
   mock.rpcError = null;
   mock.signInError = null;
+  mock.signOutCalls = 0;
+  mock.profile.is_active = true;
 });
 
 describe('AuthContext en mode connecté', () => {
@@ -118,5 +125,31 @@ describe('AuthContext en mode connecté', () => {
     });
 
     expect(mock.rpcCalls).toHaveLength(0);
+  });
+
+  it('refuse la session d’un compte désactivé et invalide le jeton émis', async () => {
+    mock.profile.is_active = false;
+
+    await renderAuth();
+
+    await act(async () => {
+      await expect(auth.login('dg@bell-mms.cm', 'motdepasse123')).rejects.toThrow(
+        "Ce compte utilisateur a été désactivé par l'administration."
+      );
+    });
+
+    expect(mock.signOutCalls).toBeGreaterThan(0);
+    expect(auth.currentUser).toBeNull();
+    expect(mock.rpcCalls).toHaveLength(0);
+  });
+
+  it('coupe la session restaurée d’un compte suspendu entre deux visites', async () => {
+    mock.session = { user: { id: 'u-dg' } };
+    mock.profile.is_active = false;
+
+    await renderAuth();
+
+    await waitFor(() => expect(mock.signOutCalls).toBeGreaterThan(0));
+    expect(auth.currentUser).toBeNull();
   });
 });
