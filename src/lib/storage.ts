@@ -73,7 +73,9 @@ export const DEFAULT_PERMISSIONS: Permission[] = [
 
 export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
   super_admin: DEFAULT_PERMISSIONS.map(p => p.code),
-  directeur_general: DEFAULT_PERMISSIONS.filter(p => !['admin:users:manage', 'admin:roles:manage', 'admin:settings:write'].includes(p.code)).map(p => p.code),
+  // Le DG tient la gestion des utilisateurs depuis la migration 023 ; les roles et les parametres
+  // systeme restent reserves a super_admin.
+  directeur_general: DEFAULT_PERMISSIONS.filter(p => !['admin:roles:manage', 'admin:settings:write'].includes(p.code)).map(p => p.code),
   secretaire: [
     'dashboard:secretaire:view',
     'clients:read', 'clients:write',

@@ -38,7 +38,9 @@ describe('AuthContext — mode démo', () => {
     expect(screen.getByTestId('email')).toHaveTextContent('dg@bell-mms.cm');
     expect(screen.getByTestId('role')).toHaveTextContent('directeur_general');
     expect(auth.hasPermission('sales:validate')).toBe(true);
-    expect(auth.hasPermission('admin:users:manage')).toBe(false);
+    expect(auth.hasPermission('admin:users:manage')).toBe(true);
+    expect(auth.hasPermission('admin:roles:manage')).toBe(false);
+    expect(auth.hasPermission('admin:settings:write')).toBe(false);
     expect(auth.hasPermission('permission:inexistante')).toBe(false);
   });
 
