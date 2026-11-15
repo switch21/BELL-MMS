@@ -144,7 +144,7 @@ export const UsersPage: React.FC = () => {
       setIsSaving(true);
       try {
         if (selectedUser) {
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from('profiles')
             .update({
               first_name: firstName,
@@ -155,8 +155,14 @@ export const UsersPage: React.FC = () => {
               is_active: isActive,
               updated_at: new Date().toISOString(),
             })
-            .eq('id', selectedUser.id);
+            .eq('id', selectedUser.id)
+            .select('id');
           if (error) throw error;
+          if (!data || data.length === 0) {
+            throw new Error(
+              'Aucune ligne modifiée : compte introuvable ou droit « admin:users:manage » insuffisant pour ce rôle.'
+            );
+          }
         } else {
           if (password.length < 8) {
             throw new Error('Le mot de passe doit contenir au moins 8 caractères.');

@@ -10,6 +10,7 @@ const mockDb = vi.hoisted(() => {
     tables: {} as Record<string, any[]>,
     errors: {} as Record<string, { message: string } | null>,
     updates: [] as Array<{ table: string; payload: any }>,
+    updateResults: {} as Record<string, any[]>,
     queries: [] as Array<{ table: string; method: string; args: any[] }>,
     invokeCalls: [] as Array<{ fn: string; options: any }>,
     invokeData: null as any,
@@ -18,6 +19,7 @@ const mockDb = vi.hoisted(() => {
 
   const makeBuilder = (table: string) => {
     const builder: any = {};
+    let isUpdate = false;
     const record = (method: string) => (...args: any[]) => {
       state.queries.push({ table, method, args });
       return builder;
@@ -32,17 +34,18 @@ const mockDb = vi.hoisted(() => {
     builder.order = record('order');
     builder.limit = record('limit');
     builder.update = (payload: any) => {
+      isUpdate = true;
       state.updates.push({ table, payload });
       state.queries.push({ table, method: 'update', args: [payload] });
       return builder;
     };
 
     builder.then = (onFulfilled: any, onRejected: any) => {
-      const data = state.tables[table] ?? [];
+      const rows = (isUpdate ? state.updateResults[table] : undefined) ?? state.tables[table] ?? [];
       return Promise.resolve({
-        data,
+        data: rows,
         error: state.errors[table] ?? null,
-        count: data.length,
+        count: rows.length,
       }).then(onFulfilled, onRejected);
     };
 
@@ -151,6 +154,7 @@ beforeEach(() => {
   mockDb.state.tables = {};
   mockDb.state.errors = {};
   mockDb.state.updates = [];
+  mockDb.state.updateResults = {};
   mockDb.state.queries = [];
   mockDb.state.invokeCalls = [];
   mockDb.state.invokeData = { profile: { id: 'u-new' } };
@@ -213,6 +217,23 @@ describe('UsersPage en mode connecté', () => {
       method: 'eq',
       args: ['id', 'u1'],
     });
+  });
+
+  it('signale une modification qui ne touche aucune ligne au lieu de la déclarer réussie', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+    mockDb.state.updateResults = { profiles: [] };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+    fireEvent.click(screen.getByLabelText(/Compte actif/));
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Aucune ligne modifiée');
+    expect(screen.getByRole('button', { name: /Annuler/ })).toBeInTheDocument();
+    // Le comptage des lignes passe par la relecture des identifiants : sans select, 0 ligne est invisible.
+    expect(mockDb.state.queries).toContainEqual({ table: 'profiles', method: 'select', args: ['id'] });
   });
 
   it('affiche une erreur de chargement sans masquer le formulaire de création', async () => {
