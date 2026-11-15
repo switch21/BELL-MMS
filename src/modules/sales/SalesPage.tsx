@@ -80,6 +80,7 @@ export const SalesPage: React.FC = () => {
   const [saleInstallmentsCount, setSaleInstallmentsCount] = useState<number>(6);
   const [salePaymentMethod, setSalePaymentMethod] = useState<PaymentMethod>('virement');
   const [saleNotes, setSaleNotes] = useState('');
+  const [saleReservationId, setSaleReservationId] = useState<string | null>(null);
 
   // Formulaire Nouvelle Réservation
   const [resClientId, setResClientId] = useState(clients[0]?.id || '');
@@ -138,8 +139,36 @@ export const SalesPage: React.FC = () => {
     };
   }, []);
 
-  // Parcelles disponibles à la vente (ou réservées si transformation)
+  // Parcelles réservables : libres de tout contrat.
   const availablePlots = plots.filter((p) => p.status === 'disponible');
+
+  // create_sale refuse toute parcelle non 'disponible' quand p_reservation_id est absent :
+  // une parcelle réservée n'est donc vendable que par la conversion de sa réservation active.
+  const today = new Date().toISOString().split('T')[0];
+  const isConvertible = (res: Reservation) =>
+    res.status === 'active' && res.expiration_date >= today;
+  const activeReservationForPlot = (plotId: string) =>
+    reservations.find((r) => r.plot_id === plotId && isConvertible(r)) ?? null;
+
+  const saleablePlots = plots.filter(
+    (p) => p.status === 'disponible' || activeReservationForPlot(p.id) !== null
+  );
+
+  const saleReservation = reservations.find((r) => r.id === saleReservationId) ?? null;
+
+  const startSaleFromReservation = (res: Reservation) => {
+    setSaleClientId(res.client_id);
+    setSalePlotId(res.plot_id);
+    setSaleReservationId(res.id);
+    setIsSaleModalOpen(true);
+  };
+
+  const handleSalePlotChange = (plotId: string) => {
+    setSalePlotId(plotId);
+    const res = activeReservationForPlot(plotId);
+    setSaleReservationId(res?.id ?? null);
+    if (res) setSaleClientId(res.client_id);
+  };
 
   // Calcul des métriques de vente
   const totalSalesVolume = sales.reduce((sum, s) => sum + s.final_price, 0);
@@ -168,7 +197,7 @@ export const SalesPage: React.FC = () => {
           p_initial_deposit: saleType === 'comptant' ? plot.total_price : saleDeposit,
           p_payment_method: salePaymentMethod,
           p_installments_count: saleType === 'echelonne' ? saleInstallmentsCount : 0,
-          p_reservation_id: null,
+          p_reservation_id: saleReservationId,
           p_notes: saleNotes || null,
         });
         if (error) throw error;
@@ -208,6 +237,11 @@ export const SalesPage: React.FC = () => {
       return;
     }
 
+    if (plot.status === 'reservee' && !saleReservationId) {
+      alert(`La parcelle "${plot.plot_number}" est réservée. Convertissez sa réservation active pour la vendre.`);
+      return;
+    }
+
     const finalPrice = plot.total_price;
     const initialDeposit = saleType === 'comptant' ? finalPrice : saleDeposit;
     const remainingBalance = finalPrice - initialDeposit;
@@ -243,6 +277,7 @@ export const SalesPage: React.FC = () => {
       reference: saleRef,
       client_id: client.id,
       plot_id: plot.id,
+      reservation_id: saleReservationId ?? undefined,
       sale_type: saleType,
       sale_date: new Date().toISOString().split('T')[0],
       total_price: finalPrice,
@@ -283,14 +318,23 @@ export const SalesPage: React.FC = () => {
 
     const updatedSales = [newSale, ...sales];
     const updatedReceipts = [newReceipt, ...receipts];
+    const updatedReservations = saleReservationId
+      ? reservations.map((r) =>
+          r.id === saleReservationId
+            ? { ...r, status: 'transformee_en_vente' as const, updated_at: new Date().toISOString() }
+            : r
+        )
+      : reservations;
 
     setPlots(updatedPlots);
     setSales(updatedSales);
     setReceipts(updatedReceipts);
+    setReservations(updatedReservations);
 
     setStoredData(STORAGE_KEYS.PLOTS, updatedPlots);
     setStoredData(STORAGE_KEYS.SALES, updatedSales);
     setStoredData(STORAGE_KEYS.RECEIPTS, updatedReceipts);
+    setStoredData(STORAGE_KEYS.RESERVATIONS, updatedReservations);
 
     // Audit log
     logAuditEvent({
@@ -533,7 +577,10 @@ export const SalesPage: React.FC = () => {
             <Button
               variant="primary"
               size="sm"
-              onClick={() => setIsSaleModalOpen(true)}
+              onClick={() => {
+                setSaleReservationId(null);
+                setIsSaleModalOpen(true);
+              }}
               className="gap-1.5"
             >
               <Plus className="w-4 h-4" />
@@ -765,6 +812,7 @@ export const SalesPage: React.FC = () => {
                     <th className="py-3 px-4">Date Réservation</th>
                     <th className="py-3 px-4">Date d'Expiration</th>
                     <th className="py-3 px-4 text-center">Statut</th>
+                    <th className="py-3 px-4">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-executive-darkBorder">
@@ -800,6 +848,18 @@ export const SalesPage: React.FC = () => {
                         <td className="py-3 px-4 text-center">
                           <Badge variant="warning">{res.status}</Badge>
                         </td>
+                        <td className="py-3 px-4">
+                          {canCreateSale && isConvertible(res) && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => startSaleFromReservation(res)}
+                            >
+                              Convertir en vente
+                            </Button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -827,7 +887,8 @@ export const SalesPage: React.FC = () => {
               <select
                 value={saleClientId}
                 onChange={(e) => setSaleClientId(e.target.value)}
-                className="w-full px-3 py-2 bg-white dark:bg-executive-darkBg border border-slate-300 dark:border-executive-darkBorder rounded-lg text-xs"
+                disabled={saleReservation !== null}
+                className="w-full px-3 py-2 bg-white dark:bg-executive-darkBg border border-slate-200 dark:border-executive-darkBorder rounded-lg text-xs disabled:bg-slate-100 dark:disabled:bg-executive-darkSurface disabled:text-slate-500"
               >
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -839,23 +900,37 @@ export const SalesPage: React.FC = () => {
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-executive-darkMuted mb-1.5">
-                Parcelle Disponible (Lot)
+                Parcelle Vendable (Lot)
               </label>
               <select
                 required
                 value={salePlotId}
-                onChange={(e) => setSalePlotId(e.target.value)}
+                onChange={(e) => handleSalePlotChange(e.target.value)}
                 className="w-full px-3 py-2 bg-white dark:bg-executive-darkBg border border-slate-300 dark:border-executive-darkBorder rounded-lg text-xs font-semibold"
               >
-                <option value="">Sélectionner une parcelle libre...</option>
-                {availablePlots.map((p) => (
+                <option value="">Sélectionner une parcelle...</option>
+                {saleablePlots.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.plot_number} — {p.area_sqm} m² ({formatCurrency(p.total_price)})
+                    {p.status === 'reservee' ? ' · réservée' : ''}
                   </option>
                 ))}
               </select>
             </div>
           </div>
+
+          {saleReservation && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-900 text-xs">
+              <p className="font-semibold text-amber-800 dark:text-amber-300">
+                Conversion de la réservation {saleReservation.reference}
+              </p>
+              <p className="text-amber-700 dark:text-amber-400 mt-1">
+                Acompte de réservation déjà encaissé : {formatCurrency(saleReservation.deposit_amount)}. La
+                conversion ne le crédite pas sur le prix : l'apport initial saisi ci-dessous s'y ajoute et le
+                solde est calculé sur le prix de la parcelle.
+              </p>
+            </div>
+          )}
 
           <div className="flex gap-4 p-2 bg-slate-50 dark:bg-executive-darkBg rounded-lg border border-slate-200 dark:border-executive-darkBorder text-xs">
             <label className="flex items-center gap-2 cursor-pointer">
