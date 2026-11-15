@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cn, formatCurrency, formatDate, formatDateTime, formatPhone } from './utils';
+import { cn, formatCurrency, formatCurrencyPdf, formatDate, formatDateTime, formatPhone } from './utils';
 
 const normalizeSpaces = (value: string) => value.replace(/\s/g, ' ');
 
@@ -13,6 +13,23 @@ describe('formatCurrency', () => {
     expect(formatCurrency(null)).toBe('0 FCFA');
     expect(formatCurrency(undefined)).toBe('0 FCFA');
     expect(formatCurrency(Number.NaN)).toBe('0 FCFA');
+  });
+});
+
+describe('formatCurrencyPdf', () => {
+  it('groupe les milliers avec l’espace ASCII exigé par le WinAnsiEncoding de jsPDF', () => {
+    expect(formatCurrencyPdf(2500000)).toBe('2 500 000 FCFA');
+    expect([...formatCurrencyPdf(15000000)].filter((c) => /\s/.test(c)).map((c) => c.codePointAt(0))).toEqual([
+      0x20, 0x20, 0x20,
+    ]);
+    expect(formatCurrencyPdf(2500000)).not.toBe(formatCurrency(2500000));
+  });
+
+  it('arrondit, signe et sécurise les valeurs absentes', () => {
+    expect(formatCurrencyPdf(4000000.4)).toBe('4 000 000 FCFA');
+    expect(formatCurrencyPdf(-1250000)).toBe('-1 250 000 FCFA');
+    expect(formatCurrencyPdf(null)).toBe('0 FCFA');
+    expect(formatCurrencyPdf(Number.NaN)).toBe('0 FCFA');
   });
 });
 

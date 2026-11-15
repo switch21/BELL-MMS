@@ -20,6 +20,19 @@ export function formatCurrency(amount: number | null | undefined): string {
 }
 
 /**
+ * Formate un montant pour les PDF jsPDF, avec l'espace ASCII (U+0020) comme séparateur de milliers :
+ * le groupeur de Intl 'fr-CM' est U+202F, absent du WinAnsiEncoding des polices standard de jsPDF.
+ */
+export function formatCurrencyPdf(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined || isNaN(amount)) {
+    return '0 FCFA';
+  }
+  const sign = amount < 0 ? '-' : '';
+  const grouped = Math.round(Math.abs(amount)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${sign}${grouped} FCFA`;
+}
+
+/**
  * Formate une date au format camerounais / français
  * Ex: formatDate("2026-11-08") => "08/11/2026"
  */

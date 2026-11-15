@@ -4,18 +4,30 @@ import { generateFinancialReportPDF, generateReceiptPDF, type FinancialReportDat
 import type { FinancialAccount, FinancialTransaction } from '../types/finance.types';
 import type { Receipt, Sale } from '../types/sales.types';
 
-const hoisted = vi.hoisted(() => ({ save: vi.fn(), text: vi.fn() }));
+const hoisted = vi.hoisted(() => ({
+  save: vi.fn(),
+  log: [] as Array<[string, ...unknown[]]>,
+}));
 
 vi.mock('jspdf', () => ({
   default: class MockJsPDF {
     lastAutoTable = { finalY: 100 };
-    setFillColor = () => {};
-    rect = () => {};
-    setTextColor = () => {};
-    setFontSize = () => {};
-    setFont = () => {};
-    text = hoisted.text;
-    setDrawColor = () => {};
+
+    private record(name: string) {
+      return (...args: unknown[]) => {
+        hoisted.log.push([name, ...args]);
+      };
+    }
+
+    setFillColor = this.record('setFillColor');
+    rect = this.record('rect');
+    setTextColor = this.record('setTextColor');
+    setFontSize = this.record('setFontSize');
+    setFont = this.record('setFont');
+    setDrawColor = this.record('setDrawColor');
+    setLineWidth = this.record('setLineWidth');
+    line = this.record('line');
+    text = this.record('text');
     save = hoisted.save;
   },
 }));
@@ -28,6 +40,41 @@ const normalize = (value: unknown) => JSON.stringify(value).replace(/\s/g, ' ');
 
 const tableBody = (callIndex: number): string[][] =>
   (vi.mocked(autoTable).mock.calls[callIndex][1] as unknown as { body: string[][] }).body;
+
+/** Séquence de dessin reconstruite depuis le journal : chaque texte porte la taille de police active. */
+const drawnTexts = () => {
+  const drawn: Array<{ value: string; x: number; y: number; size: number | null }> = [];
+  let size: number | null = null;
+
+  for (const entry of hoisted.log) {
+    if (entry[0] === 'setFontSize') {
+      size = entry[1] as number;
+      continue;
+    }
+    if (entry[0] === 'text') {
+      drawn.push({ value: entry[1] as string, x: entry[2] as number, y: entry[3] as number, size });
+    }
+  }
+
+  return drawn;
+};
+
+const fullWidthRects = () =>
+  hoisted.log
+    .filter((entry) => entry[0] === 'rect')
+    .map((entry) => ({ x: entry[1] as number, y: entry[2] as number, w: entry[3] as number, h: entry[4] as number }))
+    .filter((rect) => rect.w >= 210);
+
+/** Espaces insécables et variantes fines : absents du WinAnsiEncoding des polices standard de jsPDF. */
+const PDF_UNSAFE_SPACES = /[\u00a0\u2000-\u200a\u202f\u205f\u3000]/;
+
+const allPdfStrings = (): string[] => {
+  const fromTables = vi.mocked(autoTable).mock.calls.flatMap((call) => {
+    const options = call[1] as unknown as { head?: string[][]; body?: string[][] };
+    return [...(options.head ?? []), ...(options.body ?? [])].flat();
+  });
+  return [...drawnTexts().map((entry) => entry.value), ...fromTables];
+};
 
 const accounts: FinancialAccount[] = [
   {
@@ -105,6 +152,7 @@ describe('generateFinancialReportPDF', () => {
   beforeEach(() => {
     vi.mocked(autoTable).mockClear();
     hoisted.save.mockClear();
+    hoisted.log.length = 0;
   });
 
   it('produit les trois tableaux avec les montants consolidés', () => {
@@ -146,6 +194,7 @@ describe('generateReceiptPDF', () => {
   beforeEach(() => {
     vi.mocked(autoTable).mockClear();
     hoisted.save.mockClear();
+    hoisted.log.length = 0;
   });
 
   it('calcule le cumul encaissé et le solde restant', () => {
@@ -162,5 +211,57 @@ describe('generateReceiptPDF', () => {
     generateReceiptPDF(receipt, sale, 'Marc KAMDEM', 'Lot A-01');
 
     expect(hoisted.save).toHaveBeenCalledWith('REC-2026-001_Recu_Marc_KAMDEM.pdf');
+  });
+});
+
+describe('Mise en page des documents PDF (reçu et rapport de trésorerie)', () => {
+  const renderers: Array<{ label: string; run: () => void; amount: string }> = [
+    { label: 'reçu', run: () => generateReceiptPDF(receipt, sale, 'Marc KAMDEM', 'Lot A-01'), amount: '18 000 000 FCFA' },
+    { label: 'rapport de trésorerie', run: () => generateFinancialReportPDF(reportData), amount: '33 000 000 FCFA' },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(autoTable).mockClear();
+    hoisted.save.mockClear();
+    hoisted.log.length = 0;
+  });
+
+  it.each(renderers)('n’utilise que des espaces ASCII dans les textes du $label', ({ run, amount }) => {
+    run();
+
+    // Comparaison brute, sans normalize() : un séparateur U+202F ferait échouer toContain.
+    const raw = allPdfStrings().join(' ');
+    expect(raw.match(PDF_UNSAFE_SPACES)).toBeNull();
+    expect(raw).toContain(amount);
+  });
+
+  it.each(renderers)('réserve le nom de l’application au pied de page, en petit corps, pour le $label', ({ run }) => {
+    run();
+
+    const appLines = drawnTexts().filter((entry) => entry.value === 'BELL MULTI-MANAGEMENT SYSTEM');
+    expect(appLines).toHaveLength(1);
+    expect(appLines[0].y).toBeGreaterThanOrEqual(280);
+    expect(appLines[0].size).toBeLessThanOrEqual(8);
+  });
+
+  it.each(renderers)('place le nom de la société à l’emplacement du nom de l’application, après une gouttière, pour le $label', ({ run }) => {
+    run();
+
+    const companyLines = drawnTexts().filter((entry) => entry.value === 'BELL ENTERPRISE SARL');
+    expect(companyLines).toHaveLength(1);
+    expect(companyLines[0].y).toBeLessThanOrEqual(20);
+    expect(companyLines[0].size).toBeGreaterThanOrEqual(14);
+    // Le logo occupe 14 → 30 mm : le texte ne peut pas démarrer avant 34 mm.
+    expect(companyLines[0].x).toBeGreaterThanOrEqual(34);
+  });
+
+  it.each(renderers)('ne peint plus de bandeau vert pleine page au-dessus de 3 mm pour le $label', ({ run }) => {
+    run();
+
+    const bands = fullWidthRects();
+    expect(bands.length).toBeGreaterThan(0);
+    for (const band of bands) {
+      expect(band.h).toBeLessThanOrEqual(3);
+    }
   });
 });
