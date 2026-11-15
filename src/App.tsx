@@ -31,7 +31,8 @@ import { FinancialReportsPage } from './modules/finance/FinancialReportsPage';
 
 // Placeholders des phases suivantes
 import { ModulePlaceholder } from './components/shared/ModulePlaceholder';
-import { Building2, ShieldCheck, DollarSign, Calendar } from 'lucide-react';
+import { TasksPage } from './modules/tasks/TasksPage';
+import { Building2, ShieldCheck, DollarSign } from 'lucide-react';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -210,17 +211,7 @@ export const App: React.FC = () => {
                   path="/tasks"
                   element={
                     <ProtectedRoute>
-                      <ModulePlaceholder
-                        title="Agenda, Tâches & Suivi des Collaborateurs"
-                        phase="Phase 7"
-                        description="Calendrier des visites, rendez-vous notariaux et alertes d'échéances"
-                        icon={Calendar}
-                        features={[
-                          "Attribution des tâches avec priorité et échéance",
-                          "Calendrier partagé de l'entreprise",
-                          "Rappels et notifications d'alertes",
-                        ]}
-                      />
+                      <TasksPage />
                     </ProtectedRoute>
                   }
                 />

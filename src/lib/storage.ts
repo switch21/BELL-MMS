@@ -4,6 +4,7 @@ import { Reservation, Sale, PaymentSchedule, Receipt, ThirdPartySettlement } fro
 import { ServiceType, ServiceCase, FinancingCase } from '../types/services.types';
 import { FinancialAccount, FinancialCategory, ExpenseRequest, FinancialTransaction, FinancialTransfer, CashClosure } from '../types/finance.types';
 import { isSupabaseConfigured } from './supabase';
+import { AgendaEvent, TaskItem } from '../types/task.types';
 
 export const STORAGE_KEYS = {
   SETTINGS: 'bell_mms_app_settings',
@@ -33,6 +34,8 @@ export const STORAGE_KEYS = {
   FINANCIAL_TRANSACTIONS: 'bell_mms_financial_transactions',
   FINANCIAL_TRANSFERS: 'bell_mms_financial_transfers',
   CASH_CLOSURES: 'bell_mms_cash_closures',
+  TASKS: 'bell_mms_tasks',
+  AGENDA_EVENTS: 'bell_mms_agenda_events',
 };
 
 export const DEFAULT_ROLES: UserRole[] = [
@@ -69,6 +72,8 @@ export const DEFAULT_PERMISSIONS: Permission[] = [
   { id: 'p24', code: 'finance:reports:export', module: 'finance', name: 'Exporter rapports financiers', description: 'États consolidés' },
   { id: 'p25', code: 'projects:manage', module: 'projects', name: 'Gérer les chantiers', description: 'Suivi travaux' },
   { id: 'p26', code: 'tenders:manage', module: 'tenders', name: 'Gérer les marchés publics', description: 'Appels d\'offres et contrats' },
+  { id: 'p27', code: 'tasks:manage', module: 'tasks', name: 'Gérer les tâches', description: 'Créer, affecter et clôturer les tâches' },
+  { id: 'p28', code: 'agenda:manage', module: 'agenda', name: 'Gérer l\'agenda partagé', description: 'Visites, rendez-vous et réceptions' },
 ];
 
 export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
@@ -82,7 +87,8 @@ export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
     'land:read',
     'sales:read', 'sales:create',
     'services:read', 'services:write',
-    'finance:expense:request'
+    'finance:expense:request',
+    'tasks:manage', 'agenda:manage'
   ],
   collaborateur: [
     'dashboard:collaborateur:view',
@@ -90,7 +96,8 @@ export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
     'land:read',
     'services:read', 'services:write',
     'finance:expense:request',
-    'projects:manage'
+    'projects:manage',
+    'tasks:manage'
   ]
 };
 
@@ -293,6 +300,31 @@ export const INITIAL_CASH_CLOSURES: CashClosure[] = [
   { id: 'clo-01', reference: 'CLO-2026-11-07', account_id: 'acc-01', account_name: 'Caisse Centrale Akwa', closure_date: '2026-11-07', opening_balance: 4885000, total_inflow: 0, total_outflow: 85000, theoretical_balance: 4800000, physical_count_balance: 4800000, discrepancy: 0, discrepancy_explanation: 'Comptage physique rigoureusement conforme au solde théorique.', closed_by_name: 'Chantal NGO (Secrétaire)', status: 'validee', created_at: new Date().toISOString() },
 ];
 
+// Dates relatives pour que les scénarios de démonstration restent réalistes dans le temps.
+const localDateOffset = (days: number): string => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const dateTimeOffset = (days: number, hour: number): string => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  date.setHours(hour, 0, 0, 0);
+  return date.toISOString();
+};
+
+export const INITIAL_TASKS: TaskItem[] = [
+  { id: 'tsk-01', reference: 'TSK-2026-001', title: 'Déposer le dossier de bornage au Cadastre (PK21)', status: 'en_cours', priority: 'haute', due_date: localDateOffset(3), assigned_to: 'user-collab-01', assigned_to_name: 'Emmanuel FOTSO', created_by: 'user-dg-01', created_by_name: 'Paul BELL', notes: 'Plan de morcellement visé par le géomètre CTC.', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tsk-02', reference: 'TSK-2026-002', title: 'Relancer la SCI Lobé Résidence sur l\'apport de 25 %', status: 'a_faire', priority: 'urgente', due_date: localDateOffset(-2), assigned_to: 'user-sec-01', assigned_to_name: 'Chantal NGO', client_id: 'cli-02', created_by: 'user-dg-01', created_by_name: 'Paul BELL', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'tsk-03', reference: 'TSK-2026-003', title: 'Préparer les pièces du jugement d\'hérédité Eyango', status: 'termine', priority: 'normale', due_date: localDateOffset(-10), assigned_to: 'user-sec-01', assigned_to_name: 'Chantal NGO', client_id: 'cli-01', created_by: 'user-dg-01', created_by_name: 'Paul BELL', completed_at: new Date().toISOString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+
+export const INITIAL_AGENDA_EVENTS: AgendaEvent[] = [
+  { id: 'age-01', reference: 'AGR-2026-001', title: 'Visite de terrain — Lotissement La Grâce Japoma', event_type: 'visite_terrain', status: 'confirme', location: 'Japoma, Douala 3ème', starts_at: dateTimeOffset(3, 9), ends_at: dateTimeOffset(3, 10), assigned_to: 'user-collab-01', assigned_to_name: 'Emmanuel FOTSO', client_id: 'cli-01', created_by: 'user-sec-01', created_by_name: 'Chantal NGO', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 'age-02', reference: 'AGR-2026-002', title: 'Acte de vente notarié — Maître NJOYA', event_type: 'rdv_notaire', status: 'planifie', location: 'Étude de Maître NJOYA, Bonanjo', starts_at: dateTimeOffset(9, 14), ends_at: dateTimeOffset(9, 15), assigned_to: 'user-dg-01', assigned_to_name: 'Paul BELL', client_id: 'cli-02', created_by: 'user-sec-01', created_by_name: 'Chantal NGO', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
+
 export const getStoredData = <T>(key: string, defaultValue: T): T => {
   try {
     const raw = localStorage.getItem(key);
@@ -334,6 +366,8 @@ export const initLocalDatabase = () => {
   if (!localStorage.getItem(STORAGE_KEYS.FINANCIAL_TRANSACTIONS)) setStoredData(STORAGE_KEYS.FINANCIAL_TRANSACTIONS, INITIAL_TRANSACTIONS);
   if (!localStorage.getItem(STORAGE_KEYS.FINANCIAL_TRANSFERS)) setStoredData(STORAGE_KEYS.FINANCIAL_TRANSFERS, INITIAL_TRANSFERS);
   if (!localStorage.getItem(STORAGE_KEYS.CASH_CLOSURES)) setStoredData(STORAGE_KEYS.CASH_CLOSURES, INITIAL_CASH_CLOSURES);
+  if (!localStorage.getItem(STORAGE_KEYS.TASKS)) setStoredData(STORAGE_KEYS.TASKS, INITIAL_TASKS);
+  if (!localStorage.getItem(STORAGE_KEYS.AGENDA_EVENTS)) setStoredData(STORAGE_KEYS.AGENDA_EVENTS, INITIAL_AGENDA_EVENTS);
   if (!localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS)) {
     setStoredData(STORAGE_KEYS.AUDIT_LOGS, [
       { id: 'log-init-01', user_id: 'user-admin-01', user_email: 'admin@bell-mms.cm', action: 'CREATE', module: 'SYSTEM', entity_name: 'app_settings', entity_id: 'current', old_values: null, new_values: DEFAULT_SETTINGS, ip_address: '127.0.0.1', created_at: new Date().toISOString() } as AuditLogEntry
