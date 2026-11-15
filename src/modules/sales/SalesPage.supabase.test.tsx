@@ -176,6 +176,9 @@ describe('SalesPage en mode connecté — conversion réservation → vente', ()
 
     fireEvent.click(rowOf('RES-2026-ACTIVE').querySelector('button') as HTMLElement);
     expect(await screen.findByText('Conversion de la réservation RES-2026-ACTIVE')).toBeInTheDocument();
+    expect(
+      screen.getByText(/imputé sur le prix/i)
+    ).toBeInTheDocument();
 
     const { clientSelect, plotSelect } = saleFormSelects();
     expect(plotSelect).toHaveValue('plot-reservee');
@@ -185,12 +188,52 @@ describe('SalesPage en mode connecté — conversion réservation → vente', ()
 
     await waitFor(() => expect(mockDb.state.rpcCalls).toHaveLength(1));
     expect(mockDb.state.rpcCalls[0].fn).toBe('create_sale');
+    // 022 : le comptant d'une conversion ne verse que le complément, l'acompte de 1 000 000 est imputé.
     expect(mockDb.state.rpcCalls[0].args).toMatchObject({
       p_client_id: 'cli-1',
       p_plot_id: 'plot-reservee',
       p_reservation_id: 'res-active',
       p_sale_type: 'comptant',
+      p_initial_deposit: 14000000,
+    });
+  });
+
+  it('laisse le comptant d une parcelle libre au prix entier et l echeancier sur l apport saisi', async () => {
+    render(<SalesPage />);
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Nouvelle Vente/ }));
+    await screen.findByText('Enregistrer une Vente Immobilière');
+
+    const { plotSelect } = saleFormSelects();
+    fireEvent.change(plotSelect, { target: { value: 'plot-libre' } });
+    fireEvent.click(screen.getByRole('button', { name: /Valider la Vente/ }));
+
+    await waitFor(() => expect(mockDb.state.rpcCalls).toHaveLength(1));
+    expect(mockDb.state.rpcCalls[0].args).toMatchObject({
+      p_plot_id: 'plot-libre',
+      p_reservation_id: null,
+      p_sale_type: 'comptant',
       p_initial_deposit: 15000000,
+    });
+
+    mockDb.state.rpcCalls.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: /Nouvelle Vente/ }));
+    await screen.findByText('Enregistrer une Vente Immobilière');
+
+    const again = saleFormSelects();
+    fireEvent.change(again.plotSelect, { target: { value: 'plot-reservee' } });
+    await screen.findByText('Conversion de la réservation RES-2026-ACTIVE');
+    fireEvent.click(screen.getByRole('radio', { name: /Vente Échelonnée/ }));
+    fireEvent.change(screen.getByLabelText(/Apport Initial/), { target: { value: '2000000' } });
+    fireEvent.click(screen.getByRole('button', { name: /Valider la Vente/ }));
+
+    await waitFor(() => expect(mockDb.state.rpcCalls).toHaveLength(1));
+    expect(mockDb.state.rpcCalls[0].args).toMatchObject({
+      p_reservation_id: 'res-active',
+      p_sale_type: 'echelonne',
+      p_initial_deposit: 2000000,
+      p_installments_count: 6,
     });
   });
 

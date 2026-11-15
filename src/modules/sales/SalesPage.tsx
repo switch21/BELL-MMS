@@ -155,6 +155,8 @@ export const SalesPage: React.FC = () => {
   );
 
   const saleReservation = reservations.find((r) => r.id === saleReservationId) ?? null;
+  const reservationCredit = saleReservation ? saleReservation.deposit_amount : 0;
+  const selectedSalePlot = plots.find((p) => p.id === salePlotId) ?? null;
 
   const startSaleFromReservation = (res: Reservation) => {
     setSaleClientId(res.client_id);
@@ -189,12 +191,15 @@ export const SalesPage: React.FC = () => {
     if (isSupabaseConfigured) {
       setIsSaving(true);
       setDataError(null);
+      // create_sale (022) impute l'acompte de réservation : p_initial_deposit ne doit porter
+      // que l'apport réellement encaissé à la signature.
+      const depositDue = saleType === 'comptant' ? plot.total_price - reservationCredit : saleDeposit;
       try {
         const { data, error } = await supabase.rpc('create_sale', {
           p_client_id: client.id,
           p_plot_id: plot.id,
           p_sale_type: saleType,
-          p_initial_deposit: saleType === 'comptant' ? plot.total_price : saleDeposit,
+          p_initial_deposit: depositDue,
           p_payment_method: salePaymentMethod,
           p_installments_count: saleType === 'echelonne' ? saleInstallmentsCount : 0,
           p_reservation_id: saleReservationId,
@@ -243,8 +248,14 @@ export const SalesPage: React.FC = () => {
     }
 
     const finalPrice = plot.total_price;
-    const initialDeposit = saleType === 'comptant' ? finalPrice : saleDeposit;
+    const depositDue = saleType === 'comptant' ? finalPrice - reservationCredit : saleDeposit;
+    const initialDeposit = depositDue + reservationCredit;
     const remainingBalance = finalPrice - initialDeposit;
+
+    if (initialDeposit > finalPrice) {
+      alert('ERREUR : le règlement (apport plus acompte de réservation) dépasse le prix de la parcelle.');
+      return;
+    }
 
     const saleRef = `VTE-2026-${String(sales.length + 1).padStart(3, '0')}`;
     const recRef = `REC-2026-${String(receipts.length + 1).padStart(3, '0')}`;
@@ -294,19 +305,39 @@ export const SalesPage: React.FC = () => {
       updated_at: new Date().toISOString(),
     };
 
-    // Reçu pour l'apport initial
+    // Reçu pour l'apport encaissé à la signature
     const newReceipt: Receipt = {
       id: `rec-${Date.now()}`,
       reference: recRef,
       sale_id: newSale.id,
-      amount: initialDeposit,
+      amount: depositDue,
       payment_date: new Date().toISOString().split('T')[0],
       payment_method: salePaymentMethod,
       transaction_ref: `VIR-${Date.now().toString().slice(-6)}`,
       received_by_name: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Caisse',
-      notes: saleType === 'comptant' ? 'Règlement total au comptant' : 'Acompte initial de vente échelonnée',
+      notes: saleType === 'comptant'
+        ? (reservationCredit > 0
+            ? 'Complément du comptant, acompte de réservation imputé par ailleurs'
+            : 'Règlement total au comptant')
+        : 'Acompte initial de vente échelonnée',
       created_at: new Date().toISOString(),
     };
+
+    // L'acompte déjà encaissé à la réservation est journalisé à son tour (règle 022)
+    const creditReceipt: Receipt | null = saleReservation && reservationCredit > 0
+      ? {
+          id: `rec-${Date.now()}-res`,
+          reference: `${recRef}-AC`,
+          sale_id: newSale.id,
+          amount: reservationCredit,
+          payment_date: saleReservation.reservation_date,
+          payment_method: salePaymentMethod,
+          transaction_ref: saleReservation.reference,
+          received_by_name: currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Caisse',
+          notes: `Acompte de réservation ${saleReservation.reference} imputé sur la vente`,
+          created_at: new Date().toISOString(),
+        }
+      : null;
 
     // Mettre à jour le statut de la parcelle à "vendue"
     const updatedPlots = plots.map((p) => {
@@ -317,7 +348,9 @@ export const SalesPage: React.FC = () => {
     });
 
     const updatedSales = [newSale, ...sales];
-    const updatedReceipts = [newReceipt, ...receipts];
+    const updatedReceipts = creditReceipt
+      ? [newReceipt, creditReceipt, ...receipts]
+      : [newReceipt, ...receipts];
     const updatedReservations = saleReservationId
       ? reservations.map((r) =>
           r.id === saleReservationId
@@ -925,9 +958,14 @@ export const SalesPage: React.FC = () => {
                 Conversion de la réservation {saleReservation.reference}
               </p>
               <p className="text-amber-700 dark:text-amber-400 mt-1">
-                Acompte de réservation déjà encaissé : {formatCurrency(saleReservation.deposit_amount)}. La
-                conversion ne le crédite pas sur le prix : l'apport initial saisi ci-dessous s'y ajoute et le
-                solde est calculé sur le prix de la parcelle.
+                Acompte de réservation déjà encaissé : {formatCurrency(reservationCredit)}, imputé sur le prix.
+                {selectedSalePlot && saleType === 'comptant' && (
+                  <> L'apport à la signature est donc de {formatCurrency(selectedSalePlot.total_price - reservationCredit)}{' '}
+                  pour un prix de {formatCurrency(selectedSalePlot.total_price)}.</>
+                )}
+                {saleType === 'echelonne' && (
+                  <> L'échéancier est calculé sur le prix moins cet acompte moins l'apport saisi.</>
+                )}
               </p>
             </div>
           )}
@@ -981,6 +1019,12 @@ export const SalesPage: React.FC = () => {
                   <option value={24}>24 mois (2 ans)</option>
                 </select>
               </div>
+              {saleReservation && (
+                <p className="col-span-2 text-[11px] text-amber-700 dark:text-amber-400">
+                  Acompte de réservation déjà imputé : {formatCurrency(reservationCredit)} — l'apport ci-dessus
+                  s'y ajoute et l'échéancier porte sur le reste.
+                </p>
+              )}
             </div>
           )}
 

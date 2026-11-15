@@ -1,16 +1,19 @@
 -- Sonde LECTURE SEULE (aucune ecriture) : etat complet des parcelles TEST-, y compris l'id de
 -- la parcelle que l'UI ne rend pas. A coller dans l'editeur SQL du dashboard.
--- Attendu apres « GO reservation » du 2026-11-15 : 2 lignes.
+-- Attendu apres « GO conversion » du 2026-11-15 : 2 lignes.
 --   TEST-LOT-01 : statut vendue, vente VTE-2026-E3C80242 de 15 000 000 F, solde 8 000 000 F,
 --                 recus 7 000 000 F (solde_vente = true), res_reference NULL, history_max = 1.
---   TEST-LOT-02 : statut reservee, res_reference RES-2026-FD4F4831, res_statut active,
---                 res_expiration 2026-11-29, res_acompte 1 000 000 F, res_client « TEST CLIENT Validation »,
---                 vente_reference NULL, res_selee_par_une_vente = false, history_max = 1.
+--   TEST-LOT-02 : statut vendue, vente VTE-2026-9E06C437 de type comptant, prix 12 800 000 F,
+--                 solde 0 F, recus 12 800 000 F (solde_vente = true), vente_statut soldee,
+--                 res_reference RES-2026-FD4F4831 en statut transformee_en_vente,
+--                 res_selee_par_une_vente = true (la vente reference bien cette reservation),
+--                 history_max = 2 et history_dernier = vendue.
 -- Prix attendu : LOT-01 500 m2 x 30 000 = 15 000 000 ; LOT-02 400 m2 x 32 000 = 12 800 000 (prix_genere = true).
 -- Colonnes de controle :
 --   prix_genere   = total_price (colonne GENERATED) bien egal a area_sqm * price_per_sqm
 --   solde_vente   = final_price - total des recus de la vente, doit egaler remaining_balance
 --   history_max   = nombre de transitions d'etat enregistrees pour la parcelle
+--   res_selee_par_une_vente = sales.reservation_id designe la derniere reservation de la parcelle
 SELECT p.plot_number,
        p.id                                                        AS plot_id,
        b.name                                                      AS bloc,
