@@ -221,7 +221,10 @@ COMMIT;
 --   conforme = le corps en base a la meme signature insensible aux blancs que le texte du depot 022
 --   definer / epingle = la recree n'a pas perdu SECURITY DEFINER ni le search_path epingle
 --   8 args / retour sales = la signature publique est inchangee pour le client
--- Attendu : conforme = true, definer = true, epingle = true, nb_args = 8, uuid_retour = true,
+-- Attendu : conforme = true, definer = true, epingle = true, nb_args = 8,
+--           retour_type = sales (022 DECLARE 'RETURNS public.sales', ce n EST donc pas uuid :
+--           la colonne rend la valeur brute plutot qu un booleen, pour qu on ne puisse pas
+--           conclure a une anomalie de production a partir d une attente erronee du juge),
 --           appelle_imputation = true, recu_impute = true.
 WITH attendu(proname, lg_depot, md5_depot) AS (
     VALUES ('create_sale', 4925::int, 'ff7d6f60ab8319ba01738495cb19df7b')
@@ -247,7 +250,7 @@ SELECT a.proname,
        a.prosecdef                                                      AS definer,
        (a.cfg = 'search_path=public, pg_temp')                          AS epingle,
        a.pronargs                                                       AS nb_args,
-       (a.retour = 'uuid')                                              AS uuid_retour,
+       a.retour                                                           AS retour_type,
        a.appelle_imputation,
        a.recu_impute
 FROM actuel a
