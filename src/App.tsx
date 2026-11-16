@@ -29,10 +29,9 @@ import { FinancingPage } from './modules/financing/FinancingPage';
 import { FinancePage } from './modules/finance/FinancePage';
 import { FinancialReportsPage } from './modules/finance/FinancialReportsPage';
 
-// Placeholders des phases suivantes
-import { ModulePlaceholder } from './components/shared/ModulePlaceholder';
 import { TasksPage } from './modules/tasks/TasksPage';
-import { Building2, ShieldCheck, DollarSign } from 'lucide-react';
+import { ProjectsPage } from './modules/projects/ProjectsPage';
+import { TendersPage } from './modules/tenders/TendersPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -155,17 +154,7 @@ export const App: React.FC = () => {
                   path="/projects"
                   element={
                     <ProtectedRoute requiredPermission="projects:manage">
-                      <ModulePlaceholder
-                        title="Travaux, Aménagement & Viabilisation"
-                        phase="Phase 6"
-                        description="Suivi technique des chantiers, engins, terrassiers et réceptions de travaux"
-                        icon={Building2}
-                        features={[
-                          "Planification des travaux de viabilisation",
-                          "Budgets prévisionnels et dépenses de chantier",
-                          "Comptes rendus photographiques et réceptions",
-                        ]}
-                      />
+                      <ProjectsPage />
                     </ProtectedRoute>
                   }
                 />
@@ -174,17 +163,7 @@ export const App: React.FC = () => {
                   path="/tenders"
                   element={
                     <ProtectedRoute requiredPermission="tenders:manage">
-                      <ModulePlaceholder
-                        title="Marchés Publics & Appels d'Offres"
-                        phase="Phase 6"
-                        description="Veille, candidatures, contrats, ordres de service et décomptes"
-                        icon={ShieldCheck}
-                        features={[
-                          "Veille des appels d'offres au Cameroun",
-                          "Constitution des pièces administratives et financières",
-                          "Suivi des ordres de service et décomptes de facturation",
-                        ]}
-                      />
+                      <TendersPage />
                     </ProtectedRoute>
                   }
                 />

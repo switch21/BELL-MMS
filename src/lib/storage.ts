@@ -5,6 +5,16 @@ import { ServiceType, ServiceCase, FinancingCase } from '../types/services.types
 import { FinancialAccount, FinancialCategory, ExpenseRequest, FinancialTransaction, FinancialTransfer, CashClosure } from '../types/finance.types';
 import { isSupabaseConfigured } from './supabase';
 import { AgendaEvent, TaskItem } from '../types/task.types';
+import { WORK_STEPS_CANVAS, WorkProject, WorkProjectStep, WorkType } from '../types/project.types';
+import {
+  ServiceOrderStatus,
+  ServiceOrderType,
+  TENDER_DOCS_CANVAS,
+  Tender,
+  TenderDocStatus,
+  TenderDocument,
+  TenderServiceOrder,
+} from '../types/tender.types';
 
 export const STORAGE_KEYS = {
   SETTINGS: 'bell_mms_app_settings',
@@ -36,6 +46,8 @@ export const STORAGE_KEYS = {
   CASH_CLOSURES: 'bell_mms_cash_closures',
   TASKS: 'bell_mms_tasks',
   AGENDA_EVENTS: 'bell_mms_agenda_events',
+  WORK_PROJECTS: 'bell_mms_work_projects',
+  TENDERS: 'bell_mms_tenders',
 };
 
 export const DEFAULT_ROLES: UserRole[] = [
@@ -96,7 +108,8 @@ export const ROLE_PERMISSIONS_MAP: Record<string, string[]> = {
     'land:read',
     'services:read', 'services:write',
     'finance:expense:request',
-    'projects:manage',
+    // projects:manage retire du collaborateur : la base ne le lui accorde pas, et il agit sur les
+    // chantiers qui lui sont confies via la branche assigned_to de la RLS (migration 025).
     'tasks:manage'
   ]
 };
@@ -325,6 +338,229 @@ export const INITIAL_AGENDA_EVENTS: AgendaEvent[] = [
   { id: 'age-02', reference: 'AGR-2026-002', title: 'Acte de vente notarié — Maître NJOYA', event_type: 'rdv_notaire', status: 'planifie', location: 'Étude de Maître NJOYA, Bonanjo', starts_at: dateTimeOffset(9, 14), ends_at: dateTimeOffset(9, 15), assigned_to: 'user-dg-01', assigned_to_name: 'Paul BELL', client_id: 'cli-02', created_by: 'user-sec-01', created_by_name: 'Chantal NGO', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 ];
 
+const buildWorkSteps = (projectId: string, worksType: WorkType, doneCount: number): WorkProjectStep[] =>
+  WORK_STEPS_CANVAS[worksType].map((title, index) => {
+    const order = index + 1;
+    return {
+      id: `${projectId}-s${order}`,
+      project_id: projectId,
+      step_order: order,
+      title,
+      status: order <= doneCount ? 'termine' : order === doneCount + 1 ? 'en_cours' : 'en_attente',
+      completed_at: order <= doneCount ? new Date().toISOString() : null,
+      completed_by: order <= doneCount ? 'user-collab-01' : null,
+      completed_by_name: order <= doneCount ? 'Emmanuel FOTSO' : null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+export const INITIAL_WORK_PROJECTS: WorkProject[] = [
+  {
+    id: 'wrk-01',
+    reference: 'TRV-2026-0001',
+    title: 'Viabilisation du lotissement La Grâce Japoma',
+    description: 'Ouverture de piste, buses et repérage de 42 lots.',
+    client_id: 'cli-01',
+    site_location: 'Japoma, Douala 3ème',
+    works_type: 'viabilisation',
+    status: 'en_cours',
+    budget_estimated: 48000000,
+    budget_engaged: 31500000,
+    cost_actual: 12800000,
+    start_date: localDateOffset(-24),
+    target_end_date: localDateOffset(18),
+    reception_status: 'programmee',
+    reception_date: localDateOffset(21),
+    assigned_to: 'user-collab-01',
+    assigned_to_name: 'Emmanuel FOTSO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    notes: 'Accès contraint pendant la crue de la Wouri.',
+    steps: buildWorkSteps('wrk-01', 'viabilisation', 2),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'wrk-02',
+    reference: 'TRV-2026-0002',
+    title: 'Clôture de la parcelle 19402/Wouri',
+    client_id: 'cli-02',
+    site_location: 'Bonabéri, Douala 5ème',
+    works_type: 'cloture',
+    status: 'en_etude',
+    budget_estimated: 9500000,
+    budget_engaged: 0,
+    start_date: localDateOffset(12),
+    target_end_date: localDateOffset(42),
+    reception_status: 'non_prevue',
+    assigned_to: 'user-collab-01',
+    assigned_to_name: 'Emmanuel FOTSO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    steps: buildWorkSteps('wrk-02', 'cloture', 0),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'wrk-03',
+    reference: 'TRV-2026-0003',
+    title: 'Bornage contradictoire de la propriété EYOMO',
+    client_id: 'cli-01',
+    site_location: 'Littoral, Déidéo',
+    works_type: 'bornage',
+    status: 'termine',
+    budget_estimated: 2400000,
+    budget_engaged: 2400000,
+    cost_actual: 2350000,
+    start_date: localDateOffset(-60),
+    target_end_date: localDateOffset(-34),
+    actual_end_date: localDateOffset(-31),
+    reception_status: 'acceptee',
+    reception_date: localDateOffset(-30),
+    reception_notes: 'PV de bornage signé par les quatre riverains, déposé au Cadastre.',
+    assigned_to: 'user-sec-01',
+    assigned_to_name: 'Chantal NGO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    steps: buildWorkSteps('wrk-03', 'bornage', 5),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+];
+
+// Le canevas des pieces est le meme pour tous les marches ; seules les cases changent d'un
+// dossier a l'autre. Une piece obtenue se date et herite d'une validite glissante.
+const buildTenderDocs = (tenderId: string, statuses: TenderDocStatus[]): TenderDocument[] =>
+  TENDER_DOCS_CANVAS.map((piece, index) => {
+    const status = statuses[index];
+    const obtained = status === 'obtenu' || status === 'valide';
+    return {
+      id: `${tenderId}-d${index + 1}`,
+      tender_id: tenderId,
+      title: piece.title,
+      category: piece.category,
+      status,
+      obtained_at: obtained ? localDateOffset(-(index + 4)) : null,
+      valid_until: obtained ? localDateOffset(75 + index * 20) : null,
+      notes: null,
+      created_by: 'user-dg-01',
+      created_by_name: 'Paul BELL',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+const buildTenderOrder = (
+  tenderId: string,
+  reference: string,
+  orderType: ServiceOrderType,
+  title: string,
+  issuedOn: string,
+  amount: number | null,
+  status: ServiceOrderStatus
+): TenderServiceOrder => ({
+  id: `${tenderId}-${reference}`,
+  tender_id: tenderId,
+  reference,
+  order_type: orderType,
+  title,
+  issued_on: issuedOn,
+  amount,
+  status,
+  notes: null,
+  created_by: 'user-dg-01',
+  created_by_name: 'Paul BELL',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+});
+
+export const INITIAL_TENDERS: Tender[] = [
+  {
+    id: 'tdr-01',
+    reference: 'AOO-2026-0001',
+    title: 'Viabilisation du lotissement communal de Bonabéri — lot 2',
+    contracting_authority: 'Communauté Urbaine de Douala',
+    source: 'ARMP — avis n°012/AONO/CUD/2026',
+    tender_method: 'appel_offres',
+    status: 'en_execution',
+    estimated_amount: 185000000,
+    caution_amount: 2775000,
+    bid_amount: 179800000,
+    contract_number: '0187/CUD/DFI/2026',
+    awarded_at: localDateOffset(-40),
+    contract_signed_at: localDateOffset(-32),
+    advance_payment_rate: 20,
+    publication_date: localDateOffset(-95),
+    deadline: localDateOffset(-70),
+    execution_delay_days: 180,
+    site_location: 'Bonabéri, Douala 5ème',
+    assigned_to: 'user-collab-01',
+    assigned_to_name: 'Emmanuel FOTSO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    notes: 'Marché adjudiqué après vérification des pièces du soumissionnaire le mieux-disant.',
+    documents: buildTenderDocs('tdr-01', ['valide', 'valide', 'valide', 'valide', 'valide', 'valide', 'obtenu']),
+    service_orders: [
+      buildTenderOrder('tdr-01', 'OS-2026-0001', 'ordre_service', 'Ordre de service de démarrage', localDateOffset(-30), null, 'notifie'),
+      buildTenderOrder('tdr-01', 'DEC-2026-0001', 'decompte', 'Décompte provisoire n°01', localDateOffset(-8), 21450000, 'facture'),
+      buildTenderOrder('tdr-01', 'AVN-2026-0001', 'avenant', 'Avenant n°01 — reprise de la traverse du marché', localDateOffset(-3), 8900000, 'emis'),
+    ],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'tdr-02',
+    reference: 'AOO-2026-0002',
+    title: 'Réhabilitation du marché municipal de Yagoua',
+    contracting_authority: 'Commune de Yagoua',
+    source: 'ARMP — avis n°007/AONO/CDY/2026',
+    tender_method: 'appel_offres',
+    status: 'soumission',
+    estimated_amount: 112000000,
+    caution_amount: 1680000,
+    bid_amount: 96500000,
+    advance_payment_rate: 15,
+    publication_date: localDateOffset(-21),
+    deadline: localDateOffset(9),
+    execution_delay_days: 240,
+    site_location: 'Yagoua, Extrême-Nord',
+    assigned_to: 'user-sec-01',
+    assigned_to_name: 'Chantal NGO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    notes: 'Dépôt contre récépissé à la préfecture ; la caution bancaire doit sortir avant la remise.',
+    documents: buildTenderDocs('tdr-02', ['valide', 'valide', 'obtenu', 'obtenu', 'en_cours', 'en_cours', 'a_obtenir']),
+    service_orders: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'tdr-03',
+    reference: 'AOO-2026-0003',
+    title: 'Étude géotechnique pour l\'aménagement de la zone portuaire de Kribi',
+    contracting_authority: 'Société de Développement de Kribi',
+    source: 'Avis de consultation n°003/SOKRIBI/2026',
+    tender_method: 'consultation',
+    status: 'veille',
+    estimated_amount: 28000000,
+    caution_amount: 420000,
+    publication_date: localDateOffset(-26),
+    deadline: localDateOffset(-4),
+    execution_delay_days: 90,
+    site_location: 'Kribi, Sud',
+    assigned_to: 'user-collab-01',
+    assigned_to_name: 'Emmanuel FOTSO',
+    created_by: 'user-dg-01',
+    created_by_name: 'Paul BELL',
+    notes: 'Date limite dépassée : à clore en abandonné ou à régulariser auprès du maître d\'ouvrage.',
+    documents: buildTenderDocs('tdr-03', ['en_cours', 'a_obtenir', 'a_obtenir', 'en_cours', 'a_obtenir', 'a_obtenir', 'a_obtenir']),
+    service_orders: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+];
+
 export const getStoredData = <T>(key: string, defaultValue: T): T => {
   try {
     const raw = localStorage.getItem(key);
@@ -368,6 +604,8 @@ export const initLocalDatabase = () => {
   if (!localStorage.getItem(STORAGE_KEYS.CASH_CLOSURES)) setStoredData(STORAGE_KEYS.CASH_CLOSURES, INITIAL_CASH_CLOSURES);
   if (!localStorage.getItem(STORAGE_KEYS.TASKS)) setStoredData(STORAGE_KEYS.TASKS, INITIAL_TASKS);
   if (!localStorage.getItem(STORAGE_KEYS.AGENDA_EVENTS)) setStoredData(STORAGE_KEYS.AGENDA_EVENTS, INITIAL_AGENDA_EVENTS);
+  if (!localStorage.getItem(STORAGE_KEYS.WORK_PROJECTS)) setStoredData(STORAGE_KEYS.WORK_PROJECTS, INITIAL_WORK_PROJECTS);
+  if (!localStorage.getItem(STORAGE_KEYS.TENDERS)) setStoredData(STORAGE_KEYS.TENDERS, INITIAL_TENDERS);
   if (!localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS)) {
     setStoredData(STORAGE_KEYS.AUDIT_LOGS, [
       { id: 'log-init-01', user_id: 'user-admin-01', user_email: 'admin@bell-mms.cm', action: 'CREATE', module: 'SYSTEM', entity_name: 'app_settings', entity_id: 'current', old_values: null, new_values: DEFAULT_SETTINGS, ip_address: '127.0.0.1', created_at: new Date().toISOString() } as AuditLogEntry
