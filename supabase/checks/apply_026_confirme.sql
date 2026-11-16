@@ -308,9 +308,9 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO v_triggers FROM pg_trigger t
-    JOIN pg_class c ON c.oid = t.relid
+    JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND NOT t.tginternal
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
       AND t.tgname IN ('trg_audit_tenders', 'trg_audit_tender_documents',
                        'trg_audit_tender_service_orders');
     IF v_triggers <> 3 THEN
@@ -372,9 +372,9 @@ SELECT
         AND c.relname IN ('tenders', 'tender_documents', 'tender_service_orders')
         AND c.relrowsecurity) = 3 AS rls_active,
     (SELECT count(*) FROM pg_trigger t
-      JOIN pg_class c ON c.oid = t.relid
+      JOIN pg_class c ON c.oid = t.tgrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND NOT t.tginternal
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
         AND t.tgname IN ('trg_audit_tenders', 'trg_audit_tender_documents',
                          'trg_audit_tender_service_orders')) = 3 AS audit_branche,
     (SELECT count(*) FROM pg_constraint WHERE connamespace = 'public'::regnamespace AND contype = 'c'

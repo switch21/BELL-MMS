@@ -215,9 +215,9 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO v_triggers FROM pg_trigger t
-    JOIN pg_class c ON c.oid = t.relid
+    JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND NOT t.tginternal
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
       AND t.tgname IN ('trg_audit_tasks', 'trg_audit_agenda_events');
     IF v_triggers <> 2 THEN
         RAISE EXCEPTION 'Triggers d audit : 2 attendus, % trouves.', v_triggers USING ERRCODE = 'P0001';
@@ -251,9 +251,9 @@ SELECT
     (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relname IN ('tasks', 'agenda_events') AND c.relrowsecurity) = 2 AS rls_active,
     (SELECT count(*) FROM pg_trigger t
-      JOIN pg_class c ON c.oid = t.relid
+      JOIN pg_class c ON c.oid = t.tgrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND NOT t.tginternal
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
         AND t.tgname IN ('trg_audit_tasks', 'trg_audit_agenda_events')) = 2 AS audit_branche,
     (SELECT count(*) FROM public.role_permissions rp
       JOIN public.permissions p ON p.id = rp.permission_id

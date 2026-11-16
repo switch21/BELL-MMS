@@ -232,7 +232,7 @@ actuel AS (
            md5(btrim(regexp_replace(p.prosrc, '\s+', ' ', 'g')))    AS sig_md5,
            COALESCE(array_to_string(p.proconfig, ' ; '), '')         AS cfg,
            p.prosecdef,
-           p.proargn,
+           p.pronargs,
            pg_catalog.format_type(p.prorettype, NULL)                AS retour,
            (p.prosrc LIKE '%v_covered := p_initial_deposit + v_credit%') AS appelle_imputation,
            (p.prosrc LIKE '%imputé sur la vente%')                  AS recu_impute
@@ -246,7 +246,7 @@ SELECT a.proname,
        (a.lg_sig = d.lg_depot AND a.sig_md5 = d.md5_depot)              AS conforme,
        a.prosecdef                                                      AS definer,
        (a.cfg = 'search_path=public, pg_temp')                          AS epingle,
-       a.proargn                                                        AS nb_args,
+       a.pronargs                                                       AS nb_args,
        (a.retour = 'uuid')                                              AS uuid_retour,
        a.appelle_imputation,
        a.recu_impute

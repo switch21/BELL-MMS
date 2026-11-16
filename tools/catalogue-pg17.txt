@@ -1,0 +1,25 @@
+# -*- coding: utf-8 -*-
+# Liste de controle des colonnes de catalogue PostgreSQL 17 utilisees par les scripts de collage.
+# Une colonne inventee ne casse pas la DDL : elle casse le bloc de controle AVANT COMMIT, donc le
+# collage entier est annule (erreur 42703 en PL/pgSQL). Constate le 2026-11-16 sur apply_024 avec
+# t.relid (reel : t.tgrelid) et t.tginternal (reel : t.tgisinternal).
+# Format : table = colonne, colonne, ...  (les alias d'instruction $garde$ / $ancre$ ne sont pas des tables)
+pg_trigger = tgschema, tgname, tgrelid, tgparentid, tgtype, tgenabled, tgisinternal, tgconstrrelid, tgconstrindid, tgconstraint, tgdeferrable, tginitdeferred, tgnargs, tgattr, tgargs, tgqual, tgoldtable, tgnewtable, tgoid, oid
+pg_class = relname, relnamespace, reltype, reloftype, relowner, relam, relfilenode, reltablespace, relpages, reltuples, relallvisible, reltoastrelid, relhasindex, relisshared, relpersistence, relkind, relnatts, relchecks, relhasrules, relhastriggers, relhassubclass, relrowsecurity, oid
+# Exception declaree, volontaire : relforcerowsecurity, relispopulated, relreplident, relispartition, relrewrite, relacl, reloptions, relpartbound... existent en PG 17 mais sont HORS du besoin de
+# ces scripts. Les refuser ici est un choix : une colonne que personne dans le depot n'ecrit ne doit
+# pas devenir une dependance implicite. Elles seront ajoutees le jour ou un script les utilise.
+pg_namespace = nspname, nspowner, nspacl, oid
+pg_constraint = conname, connamespace, contype, condeferrable, convalidated, conrelid, contypid, conindid, conparentid, confrelid, confupdtype, confdeltype, confmatchtype, conislocal, coninhcount, connoinherit, connuminherit, conkeys, conexclkeys, conflattrs, confattrs, confdelsetcols, conorigname, conindname, conisolation, consrc, conbin, oid
+pg_proc = proname, pronamespace, proowner, prolang, procost, prorows, provariadic, prosupport, prokind, prosecdef, proleakproof, proisstrict, proretset, provolatile, proparallel, pronargs, pronargdefaults, prorettype, proargtypes, proallargtypes, proargmodes, proargnames, proargdefaults, protrftypes, prosrc, probin, sql_body, proconfig, proacl, oid
+pg_type = typname, typnamespace, typowner, typlen, typbyval, typtype, typcategory, typispreferred, typisdefined, typdelim, typrelid, typsubscript, typelement, typarray, typinput, typoutput, typreceiver, typsend, typmodin, typmodout, typanalyze, typalign, typstorage, typnotnull, typbasetype, typtypmod, typndims, typcollation, typdefaultbin, typdefault, typacl, oid
+pg_policy = polname, polcmd, polrelid, polpermissive, polroles, polqual, polwithcheck, oid
+pg_index = indexrelid, indrelid, indnatts, indnkeyatts, indisunique, indnullsnotdistinct, indisprimary, indisexclusion, indimmediate, indisclustered, indisvalid, checkactexclude, indpred, indexprs, indkey, indcollation, indclass, indoption, indnullordering, indamoptions, oid
+pg_attribute = attrelid, attname, atttypid, attstattarget, attlen, attnum, attndims, attcacheoff, atttypmod, attbyval, attalign, attstorage, attcompression, attisset, attnotnull, atthasdef, atthasmissing, attidentity, attgenerated, attisdropped, attislocal, attinhcount, attcollation, attacl, attoptions, attfdwoptions, attmissingval, oid
+# Vues du catalogue (pas de table systeme : colonnes fixes)
+pg_indexes = schemaname, tablename, indexname, tablespace, indexdef
+pg_policies = schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
+pg_views = schemaname, viewname, viewowner, definition
+pg_tables = schemaname, tablename, tableowner, tablespace, hasindexes, hasrules, hastriggers, rowsecurity
+pg_sequences = schemaname, sequencename, sequenceowner, start_value, min_value, max_value, increment_by, cycle, cache_size, last_value
+information_schema.tables = table_catalog, table_schema, table_name, table_type, is_insertable_into, is_typed, commit_action

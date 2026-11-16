@@ -209,9 +209,9 @@ BEGIN
     END IF;
 
     SELECT count(*) INTO v_triggers FROM pg_trigger t
-    JOIN pg_class c ON c.oid = t.relid
+    JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND NOT t.tginternal
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
       AND t.tgname IN ('trg_audit_work_projects', 'trg_audit_work_project_steps');
     IF v_triggers <> 2 THEN
         RAISE EXCEPTION 'Triggers d audit : 2 attendus, % trouves.', v_triggers USING ERRCODE = 'P0001';
@@ -258,9 +258,9 @@ SELECT
       WHERE n.nspname = 'public' AND c.relname IN ('work_projects', 'work_project_steps')
         AND c.relrowsecurity) = 2 AS rls_active,
     (SELECT count(*) FROM pg_trigger t
-      JOIN pg_class c ON c.oid = t.relid
+      JOIN pg_class c ON c.oid = t.tgrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND NOT t.tginternal
+      WHERE n.nspname = 'public' AND NOT t.tgisinternal AND t.tgenabled = 'O'
         AND t.tgname IN ('trg_audit_work_projects', 'trg_audit_work_project_steps')) = 2 AS audit_branche,
     (SELECT count(*) FROM pg_constraint WHERE connamespace = 'public'::regnamespace AND contype = 'c'
       AND conname IN ('chk_work_project_type', 'chk_work_project_status', 'chk_work_project_reception',
