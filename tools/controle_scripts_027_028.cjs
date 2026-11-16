@@ -82,7 +82,12 @@ function scanner(src) {
       ligne++;
       continue;
     }
-    if (etat === 'commentaire') continue;
+    if (etat === 'commentaire') {
+      // L'octet n'est pas juge (un accent dans un -- n'a pas d'effet au collage) mais il est
+      // compte : rendre « commentaires 0 » pour une classe jamais observee est une fausse mesure.
+      if (c.charCodeAt(0) > 127) octets.push({ ligne, etat: 'commentaire' });
+      continue;
+    }
     if (etat === 'simple' || etat === 'double') {
       if (c === (etat === 'simple' ? "'" : '"')) {
         if (/[^\x00-\x7F]/.test(contenu)) chaines.push({ type: etat, texte: contenu, ligne: ligneDebut });
@@ -113,7 +118,7 @@ function jugerNonAscii(nom, src, nomsAdmis) {
   );
   const compte = (e) => r.octets.filter((o) => o.etat === e).length;
   const rendu =
-    r.octets.length + ' octets (commentaires ' + compte('commentaire') + ', chaines ' +
+    r.octets.length + ' octets (commentaires ' + compte('commentaire') + ' non juges, chaines ' +
     compte('simple') + ', identifiants ' + compte('double') + ', code nu ' + enCodeNu.length + ')';
   if (enCodeNu.length === 0 && horsRegle.length === 0 && r.etatFinal === 'code') {
     ok('octets non ASCII ' + nom, 'code nu sans accent, accents restants = noms de 002 ou messages', rendu);
