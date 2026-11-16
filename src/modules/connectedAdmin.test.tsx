@@ -182,7 +182,7 @@ describe('UsersPage en mode connecté', () => {
     expect(screen.queryByText('Aucun profil utilisateur disponible.')).not.toBeInTheDocument();
   });
 
-  it('modifie un compte existant via l’Edge Function, sans toucher à l’email ni au mot de passe', async () => {
+  it('modifie un compte existant via l’Edge Function, email inclus, mot de passe laissé intact', async () => {
     mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
 
     render(<UsersPage />);
@@ -205,6 +205,7 @@ describe('UsersPage en mode connecté', () => {
           user_id: 'u1',
           first_name: 'Emmanuel',
           last_name: 'FOTSO',
+          email: 'dg@bell-mms.local',
           phone: '+237 699111222',
           job_title: 'Directeur Général',
           role_id: 'role-dg',
@@ -214,6 +215,26 @@ describe('UsersPage en mode connecté', () => {
       },
     });
     expect(mockDb.state.updates).toHaveLength(0);
+  });
+
+  it('laisse saisir une nouvelle adresse email en mode connecté (028 : la colonne existe)', async () => {
+    mockDb.state.tables = { profiles: PROFILES, roles: ROLES };
+
+    render(<UsersPage />);
+    await screen.findByText('Emmanuel FOTSO');
+
+    fireEvent.click(screen.getAllByTitle('Modifier les droits')[0]);
+
+    const champ = screen.getByLabelText('Adresse Email') as HTMLInputElement;
+    expect(champ.disabled).toBe(false);
+
+    fireEvent.change(champ, { target: { value: 'emmanuel.fotso@bell-enterprise.cm' } });
+    fireEvent.click(screen.getByRole('button', { name: /Enregistrer les modifications/ }));
+
+    await waitFor(() => expect(mockDb.state.invokeCalls).toHaveLength(1));
+    expect(mockDb.state.invokeCalls[0].options.body).toMatchObject({
+      email: 'emmanuel.fotso@bell-enterprise.cm',
+    });
   });
 
   it('porte un nouveau mot de passe sur le compte existant', async () => {

@@ -13,6 +13,7 @@ const json = (body: unknown, status = 200) =>
   });
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface UpdateUserPayload {
   user_id?: string;
@@ -23,6 +24,7 @@ interface UpdateUserPayload {
   role_id?: string;
   is_active?: boolean;
   password?: string | null;
+  email?: string | null;
 }
 
 interface ProfileRow {
@@ -34,6 +36,7 @@ interface ProfileRow {
   role_id: string | null;
   is_active: boolean;
   updated_at: string;
+  role?: { access_level: number } | null;
 }
 
 interface PermissionGrantRow {
@@ -41,12 +44,15 @@ interface PermissionGrantRow {
   permission: { code: string } | null;
 }
 
-const GUARD_FAIL = { error: null as string | null, callerId: null as string | null };
+const GUARD_FAIL = { error: null as string | null, callerId: null as string | null, level: 0 };
 
+// Le niveau vient de roles.access_level (migration 027) : le depot 027 doit etre applique AVANT
+// ce redploiement, sinon la selection de roles(code, access_level) echoue et la fonction
+// refuse toute modification (message « Impossible de vérifier le profil de l'appelant »).
 async function checkCallerCanManageUsers(
   admin: SupabaseClient,
   authorization: string
-): Promise<{ error: string | null; callerId: string | null }> {
+): Promise<{ error: string | null; callerId: string | null; level: number }> {
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   if (!token) return { ...GUARD_FAIL, error: 'Jeton d’authentification manquant.' };
 
@@ -57,33 +63,35 @@ async function checkCallerCanManageUsers(
 
   const { data: profile, error: profileError } = await admin
     .from('profiles')
-    .select('id, role_id, is_active, role:roles(code)')
+    .select('id, role_id, is_active, role:roles(code, access_level)')
     .eq('id', callerId)
     .maybeSingle<{
       id: string;
       role_id: string | null;
       is_active: boolean;
-      role: { code: string } | null;
+      role: { code: string; access_level: number } | null;
     }>();
 
-  if (profileError) return { callerId, error: 'Impossible de vérifier le profil de l’appelant.' };
+  if (profileError) return { callerId, level: 0, error: 'Impossible de vérifier le profil de l’appelant.' };
   if (!profile || !profile.is_active) {
-    return { callerId, error: 'Profil appelant introuvable ou inactif.' };
+    return { callerId, level: 0, error: 'Profil appelant introuvable ou inactif.' };
   }
-  if (profile.role?.code === 'super_admin') return { callerId, error: null };
-  if (!profile.role_id) return { callerId, error: 'Aucun rôle associé à ce profil.' };
+
+  const level = profile.role?.access_level ?? 0;
+  if (profile.role?.code === 'super_admin') return { callerId, level, error: null };
+  if (!profile.role_id) return { callerId, level, error: 'Aucun rôle associé à ce profil.' };
 
   const { data: grants, error: grantsError } = await admin
     .from('role_permissions')
     .select('role_id, permission:permissions(code)')
     .eq('role_id', profile.role_id);
 
-  if (grantsError) return { callerId, error: 'Impossible de vérifier les droits de l’appelant.' };
+  if (grantsError) return { callerId, level, error: 'Impossible de vérifier les droits de l’appelant.' };
 
   const allowed = ((grants ?? []) as PermissionGrantRow[]).some(
     (grant) => grant.permission?.code === 'admin:users:manage'
   );
-  return { callerId, error: allowed ? null : 'Permission admin:users:manage requise.' };
+  return { callerId, level, error: allowed ? null : 'Permission admin:users:manage requise.' };
 }
 
 Deno.serve(async (req) => {
@@ -118,6 +126,7 @@ Deno.serve(async (req) => {
   const jobTitle = payload.job_title?.trim() || null;
   const password = payload.password ?? '';
   const isActive = payload.is_active !== false;
+  const email = (payload.email ?? '').trim().toLowerCase();
 
   if (!UUID_PATTERN.test(userId)) return json({ error: 'Identifiant d’utilisateur invalide.' }, 400);
   if (!firstName || !lastName) {
@@ -127,13 +136,16 @@ Deno.serve(async (req) => {
   if (password && password.length < 8) {
     return json({ error: 'Le mot de passe doit contenir au moins 8 caractères.' }, 400);
   }
+  if (email && !EMAIL_PATTERN.test(email)) {
+    return json({ error: 'Adresse email invalide.' }, 400);
+  }
   if (userId === guard.callerId && !isActive) {
     return json({ error: 'Impossible de suspendre votre propre compte.' }, 400);
   }
 
   const { data: target, error: targetError } = await admin
     .from('profiles')
-    .select('id, first_name, last_name, phone, job_title, role_id, is_active, updated_at')
+    .select('id, first_name, last_name, phone, job_title, role_id, is_active, updated_at, role:roles(access_level)')
     .eq('id', userId)
     .maybeSingle<ProfileRow>();
 
@@ -142,12 +154,25 @@ Deno.serve(async (req) => {
 
   const { data: role, error: roleError } = await admin
     .from('roles')
-    .select('id, code')
+    .select('id, code, access_level')
     .eq('id', roleId)
-    .maybeSingle<{ id: string; code: string }>();
+    .maybeSingle<{ id: string; code: string; access_level: number }>();
 
   if (roleError) return json({ error: 'Impossible de vérifier le rôle.' }, 500);
   if (!role) return json({ error: 'Rôle introuvable.' }, 400);
+
+  // Hierarchie (027) : la RLS ne sert pas ici, la fonction ecrit avec la cle service_role qui
+  // la franchit. Sans ces trois controles, le trou (a) du depot survivrait malgre 027.
+  const targetLevel = target.role?.access_level ?? 0;
+  if (targetLevel > guard.level) {
+    return json({ error: 'Vous ne pouvez pas modifier un compte de niveau supérieur au vôtre.' }, 403);
+  }
+  if ((role.access_level ?? 0) > guard.level) {
+    return json({ error: 'Vous ne pouvez pas attribuer un rôle de niveau supérieur au vôtre.' }, 403);
+  }
+  if (userId === guard.callerId && roleId !== target.role_id) {
+    return json({ error: 'Impossible de modifier votre propre rôle.' }, 400);
+  }
 
   const restoreProfile = async () => {
     const { error: rollbackError } = await admin
@@ -214,6 +239,62 @@ Deno.serve(async (req) => {
     );
   }
 
+  // L'email s'ecrit dans auth.users (seule autorite), le trigger on_auth_user_email de 028
+  // repercute la valeur sur profiles.email ; la lecture finale en bas de fonction renvoie donc
+  // le miroir deja synchronise. previousEmail sert de valeur de retour arrière si l'etape
+  // suivante echoue.
+  const previousEmail = (authUser.user.email ?? '').toLowerCase();
+  let emailChanged = false;
+  if (email && email !== previousEmail) {
+    // Le miroir n'a volontairement pas de contrainte UNIQUE (028) : deux lignes peuvent porter la
+    // meme adresse en transit. maybeSingle() echouerait alors en 406 et bloquerait toute
+    // modification d'email ; la lecture rend donc une liste.
+    const { data: taken, error: takenError } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .neq('id', userId)
+      .limit(1);
+
+    if (takenError) {
+      const rollbackMessage = await restoreProfile();
+      return json(
+        {
+          error: `Vérification de l'adresse impossible : ${takenError.message}`,
+          rollback: rollbackMessage ? `Échec du retour arrière : ${rollbackMessage}` : 'profil restauré',
+        },
+        500
+      );
+    }
+    if (taken && taken.length > 0) {
+      const rollbackMessage = await restoreProfile();
+      return json(
+        {
+          error: 'Cette adresse email est déjà utilisée par un autre compte.',
+          rollback: rollbackMessage ? `Échec du retour arrière : ${rollbackMessage}` : 'profil restauré',
+        },
+        400
+      );
+    }
+
+    const { error: emailError } = await admin.auth.admin.updateUserById(userId, {
+      email,
+      email_confirm: true,
+    });
+    if (emailError) {
+      const rollbackMessage = await restoreProfile();
+      return json(
+        {
+          error: `Adresse email non modifiée : ${emailError.message}`,
+          rollback: rollbackMessage ? `Échec du retour arrière : ${rollbackMessage}` : 'profil restauré',
+        },
+        400
+      );
+    }
+    emailChanged = true;
+    authActions.push('email');
+  }
+
   const currentlyBanned = Boolean(authUser.user.banned_until);
   const desiredBan = isActive ? (currentlyBanned ? 'none' : null) : (currentlyBanned ? null : 'permanent');
 
@@ -222,6 +303,9 @@ Deno.serve(async (req) => {
       ban_duration: desiredBan,
     });
     if (banError) {
+      if (emailChanged && previousEmail) {
+        await admin.auth.admin.updateUserById(userId, { email: previousEmail, email_confirm: true });
+      }
       const rollbackMessage = await restoreProfile();
       return json(
         {

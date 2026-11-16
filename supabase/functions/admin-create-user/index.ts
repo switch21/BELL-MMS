@@ -31,43 +31,55 @@ interface PermissionGrantRow {
   permission: { code: string } | null;
 }
 
+interface CallerGuard {
+  error: string | null;
+  level: number;
+}
+
+// Le niveau vient de roles.access_level (migration 027) : la fonction refuse d'attribuer un
+// role plus eleve que le sien, sinon un DG creerait un super_admin et l'escalade serait
+// disponible des la creation. Le depot 027 doit donc etre applique AVANT ce redploiement.
 async function checkCallerCanManageUsers(
   admin: SupabaseClient,
   authorization: string
-): Promise<string | null> {
+): Promise<CallerGuard> {
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
-  if (!token) return 'Jeton d’authentification manquant.';
+  if (!token) return { error: 'Jeton d’authentification manquant.', level: 0 };
 
   const { data: caller, error: callerError } = await admin.auth.getUser(token);
-  if (callerError || !caller.user) return 'Session invalide ou expirée.';
+  if (callerError || !caller.user) return { error: 'Session invalide ou expirée.', level: 0 };
 
   const { data: profile, error: profileError } = await admin
     .from('profiles')
-    .select('id, role_id, is_active, role:roles(code)')
+    .select('id, role_id, is_active, role:roles(code, access_level)')
     .eq('id', caller.user.id)
     .maybeSingle<{
       id: string;
       role_id: string | null;
       is_active: boolean;
-      role: { code: string } | null;
+      role: { code: string; access_level: number } | null;
     }>();
 
-  if (profileError) return 'Impossible de vérifier le profil de l’appelant.';
-  if (!profile || !profile.is_active) return 'Profil appelant introuvable ou inactif.';
-  if (profile.role?.code === 'super_admin') return null;
-  if (!profile.role_id) return 'Aucun rôle associé à ce profil.';
+  if (profileError) return { error: 'Impossible de vérifier le profil de l’appelant.', level: 0 };
+  if (!profile || !profile.is_active) return { error: 'Profil appelant introuvable ou inactif.', level: 0 };
+
+  const callerLevel = profile.role?.access_level ?? 0;
+  if (profile.role?.code === 'super_admin') return { error: null, level: callerLevel };
+  if (!profile.role_id) return { error: 'Aucun rôle associé à ce profil.', level: callerLevel };
 
   const { data: grants, error: grantsError } = await admin
     .from('role_permissions')
     .select('role_id, permission:permissions(code)')
     .eq('role_id', profile.role_id);
 
-  if (grantsError) return 'Impossible de vérifier les droits de l’appelant.';
+  if (grantsError) return { error: 'Impossible de vérifier les droits de l’appelant.', level: callerLevel };
 
   const allowed = ((grants ?? []) as PermissionGrantRow[]).some(
     (grant) => grant.permission?.code === 'admin:users:manage'
   );
-  return allowed ? null : 'Permission admin:users:manage requise.';
+  return allowed
+    ? { error: null, level: callerLevel }
+    : { error: 'Permission admin:users:manage requise.', level: callerLevel };
 }
 
 Deno.serve(async (req) => {
@@ -84,8 +96,8 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const authError = await checkCallerCanManageUsers(admin, req.headers.get('Authorization') ?? '');
-  if (authError) return json({ error: authError }, 403);
+  const guard = await checkCallerCanManageUsers(admin, req.headers.get('Authorization') ?? '');
+  if (guard.error) return json({ error: guard.error }, 403);
 
   let payload: CreateUserPayload;
   try {
@@ -114,12 +126,15 @@ Deno.serve(async (req) => {
 
   const { data: role, error: roleError } = await admin
     .from('roles')
-    .select('id, code')
+    .select('id, code, access_level')
     .eq('id', roleId)
-    .maybeSingle<{ id: string; code: string }>();
+    .maybeSingle<{ id: string; code: string; access_level: number }>();
 
   if (roleError) return json({ error: 'Impossible de vérifier le rôle.' }, 500);
   if (!role) return json({ error: 'Rôle introuvable.' }, 400);
+  if ((role.access_level ?? 0) > guard.level) {
+    return json({ error: 'Vous ne pouvez pas attribuer un rôle de niveau supérieur au vôtre.' }, 403);
+  }
 
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email,
@@ -138,6 +153,7 @@ Deno.serve(async (req) => {
       id: created.user.id,
       first_name: firstName,
       last_name: lastName,
+      email,
       phone,
       job_title: jobTitle,
       role_id: roleId,

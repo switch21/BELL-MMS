@@ -156,6 +156,7 @@ export const UsersPage: React.FC = () => {
               user_id: selectedUser.id,
               first_name: firstName,
               last_name: lastName,
+              email,
               phone,
               job_title: jobTitle,
               role_id: roleId,
@@ -458,10 +459,9 @@ export const UsersPage: React.FC = () => {
             type="email"
             required
             value={email}
-            disabled={isSupabaseConfigured && Boolean(selectedUser)}
             helperText={
               isSupabaseConfigured && selectedUser
-                ? 'L’adresse email est gérée dans Supabase Auth.'
+                ? 'Adresse de connexion Supabase Auth. Un compte ne peut modifier l’email que d’un compte de niveau égal ou inférieur au sien.'
                 : undefined
             }
             onChange={(e) => setEmail(e.target.value)}
