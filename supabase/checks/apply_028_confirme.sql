@@ -176,8 +176,10 @@ COMMIT;
 
 -- 7. CERTIFICATION (LECTURE SEULE, 1 ligne, dernier jeu rendu par l'editeur).
 --   Attendu : colonne_email, trigger_branche_actif, fonction_definer_epinglee,
---             droit_serveur_auth, anon_refuse, miroir_plein, miroir_identique valent true ;
---             comptes_miroir = nombre de comptes (4 au 2026-11-16), comptes_sans_email = 0.
+--             droit_serveur_auth, anon_refuse, miroir_identique valent true ; comptes_miroir =
+--             nombre de comptes joins (4 au 2026-11-16). Le controle pre-commit, lui, compte les
+--             comptes sans email (v_sans_email) et leve une exception s'il en reste : un miroir
+--             incomplet ne commit donc pas.
 SELECT
     (SELECT count(*) FROM pg_attribute AS a
       WHERE a.attrelid = 'public.profiles'::regclass
