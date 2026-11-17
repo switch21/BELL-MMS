@@ -195,7 +195,7 @@ function juger() {
   // 12. La garde de niveau en code survit : H1 ajoute une couche, il ne retire pas le message
   //     lisible qui precede l'ecrite (refus 403 avant tout essai).
   const refus = [
-    ['admin-update-user', /userId !== guard\.callerId && targetLevel >= guard\.level/, 'cible au-dessus ou egale (029)'],
+    ['admin-update-user', /userId !== guard\.callerId && !guard\.isSuperAdmin && targetLevel >= guard\.level/, 'cible au-dessus ou egale (029), super_admin exemptee (030)'],
     ['admin-update-user', /target\.is_system === true && userId !== guard\.callerId/, 'ligne racine rendue introuvable (029)'],
     ['admin-update-user', /\(role\.access_level \?\? 0\) > guard\.level/, 'role au-dessus'],
     ['admin-update-user', /userId === guard\.callerId && roleId !== target\.role_id/, 'auto-changement de role'],

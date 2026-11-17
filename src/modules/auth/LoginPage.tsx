@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Shield, ArrowRight, CheckCircle2, Lock, Database, Layers } from 'lucide-react';
+import { Shield, ArrowRight, Lock, Layers } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -68,24 +68,15 @@ export const LoginPage: React.FC = () => {
           Système Intégré de Gestion d'Entreprise — Cameroun
         </p>
 
-        {/* Indicateur de mode de connexion : Supabase connecté vs démo */}
-        <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border">
-          {isSupabaseConfigured ? (
-            <>
-              <Database className="w-3 h-3 text-emerald-500" />
-              <span className="text-emerald-600 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700">
-                Supabase connecté — authentification réelle
-              </span>
-            </>
-          ) : (
-            <>
-              <Layers className="w-3 h-3 text-amber-500" />
-              <span className="text-amber-600 dark:text-amber-400">
-                Mode démo — authentification locale
-              </span>
-            </>
-          )}
-        </div>
+        {/* Le mode démo doit rester signalé ; le mode connecté, lui, ne s'affiche plus. */}
+        {!isSupabaseConfigured && (
+          <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border border-amber-300 dark:border-amber-700">
+            <Layers className="w-3 h-3 text-amber-500" />
+            <span className="text-amber-600 dark:text-amber-400">
+              Mode démo — authentification locale
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4">
@@ -162,12 +153,9 @@ export const LoginPage: React.FC = () => {
           )}
         </div>
 
-        <div className="mt-6 text-center text-xs text-slate-500 dark:text-executive-darkMuted">
-          <p className="flex items-center justify-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5 text-executive-emerald" />
-            Environnement de production BELL ENTERPRISE — Douala
-          </p>
-        </div>
+        <p className="mt-6 text-center text-xs text-slate-500 dark:text-executive-darkMuted">
+          © {new Date().getFullYear()} JENGU SOLUTIONS — Tous droits réservés
+        </p>
       </div>
     </div>
   );

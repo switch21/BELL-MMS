@@ -45,7 +45,7 @@ interface PermissionGrantRow {
   permission: { code: string } | null;
 }
 
-const GUARD_FAIL = { error: null as string | null, callerId: null as string | null, level: 0 };
+const GUARD_FAIL = { error: null as string | null, callerId: null as string | null, level: 0, isSuperAdmin: false };
 
 // Le niveau vient de roles.access_level (migration 027) : le depot 027 doit etre applique AVANT
 // ce redploiement, sinon la selection de roles(code, access_level) echoue et la fonction
@@ -53,7 +53,7 @@ const GUARD_FAIL = { error: null as string | null, callerId: null as string | nu
 async function checkCallerCanManageUsers(
   admin: SupabaseClient,
   authorization: string
-): Promise<{ error: string | null; callerId: string | null; level: number }> {
+): Promise<{ error: string | null; callerId: string | null; level: number; isSuperAdmin: boolean }> {
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   if (!token) return { ...GUARD_FAIL, error: 'Jeton d’authentification manquant.' };
 
@@ -73,26 +73,26 @@ async function checkCallerCanManageUsers(
       role: { code: string; access_level: number } | null;
     }>();
 
-  if (profileError) return { callerId, level: 0, error: 'Impossible de vérifier le profil de l’appelant.' };
+  if (profileError) return { callerId, level: 0, isSuperAdmin: false, error: 'Impossible de vérifier le profil de l’appelant.' };
   if (!profile || !profile.is_active) {
-    return { callerId, level: 0, error: 'Profil appelant introuvable ou inactif.' };
+    return { callerId, level: 0, isSuperAdmin: false, error: 'Profil appelant introuvable ou inactif.' };
   }
 
   const level = profile.role?.access_level ?? 0;
-  if (profile.role?.code === 'super_admin') return { callerId, level, error: null };
-  if (!profile.role_id) return { callerId, level, error: 'Aucun rôle associé à ce profil.' };
+  if (profile.role?.code === 'super_admin') return { callerId, level, error: null, isSuperAdmin: true };
+  if (!profile.role_id) return { callerId, level, isSuperAdmin: false, error: 'Aucun rôle associé à ce profil.' };
 
   const { data: grants, error: grantsError } = await admin
     .from('role_permissions')
     .select('role_id, permission:permissions(code)')
     .eq('role_id', profile.role_id);
 
-  if (grantsError) return { callerId, level, error: 'Impossible de vérifier les droits de l’appelant.' };
+  if (grantsError) return { callerId, level, isSuperAdmin: false, error: 'Impossible de vérifier les droits de l’appelant.' };
 
   const allowed = ((grants ?? []) as PermissionGrantRow[]).some(
     (grant) => grant.permission?.code === 'admin:users:manage'
   );
-  return { callerId, level, error: allowed ? null : 'Permission admin:users:manage requise.' };
+  return { callerId, level, isSuperAdmin: false, error: allowed ? null : 'Permission admin:users:manage requise.' };
 }
 
 Deno.serve(async (req) => {
@@ -191,7 +191,8 @@ Deno.serve(async (req) => {
   // 029 a retourné le premier test : un pair n'est plus une cible. La modification de son propre
   // compte reste permise, c'est la politique personnelle qui la porte.
   const targetLevel = target.role?.access_level ?? 0;
-  if (userId !== guard.callerId && targetLevel >= guard.level) {
+  // 030 : le super_admin n'a pas de pair, il n'est donc pas borne par la comparaison de niveau.
+  if (userId !== guard.callerId && !guard.isSuperAdmin && targetLevel >= guard.level) {
     return json(
       { error: 'Vous ne pouvez pas modifier un compte de niveau égal ou supérieur au vôtre.' },
       403

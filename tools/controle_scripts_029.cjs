@@ -299,7 +299,7 @@ function juger() {
   //     le drapeau.
   const regles = [
     ['update: is_system lu sur la cible', /\.select\('[^']*is_system[^']*'\)[\s\S]{0,120}?\.eq\('id', userId\)/.test(update)],
-    ['update: pair refuse', /userId !== guard\.callerId && targetLevel >= guard\.level/.test(update)],
+    ['update: pair refuse (sauf super_admin, 030)', /userId !== guard\.callerId && !guard\.isSuperAdmin && targetLevel >= guard\.level/.test(update)],
     ['update: ligne racine repond introuvable', /target\.is_system === true && userId !== guard\.callerId[\s\S]{0,160}Profil utilisateur introuvable\.' \}, 404/.test(update)],
     ['update: attribution d un pair permise', /\(role\.access_level \?\? 0\) > guard\.level/.test(update)],
     ['update: role personnel verrouille dans le code', /userId === guard\.callerId && roleId !== target\.role_id/.test(update)],
@@ -385,7 +385,7 @@ const MUTATIONS = [
     d: '    id = auth.uid()\n    AND public.profile_role_as_stored(id, role_id)',
     a: '    id = auth.uid()' },
   { nom: 'la fonction garde la regle de 027 (pair autorise)', fichier: FIC.update, controle: 'code des fonctions 029',
-    d: '  if (userId !== guard.callerId && targetLevel >= guard.level) {',
+    d: '  if (userId !== guard.callerId && !guard.isSuperAdmin && targetLevel >= guard.level) {',
     a: '  if (targetLevel > guard.level) {' },
   { nom: 'la fonction rend la ligne racine visible par son message', fichier: FIC.update, controle: 'code des fonctions 029',
     d: "  if (target.is_system === true && userId !== guard.callerId) {\n    return json({ error: 'Profil utilisateur introuvable.' }, 404);\n  }",
