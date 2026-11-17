@@ -306,7 +306,7 @@ function juger(m) {
   const regles = [
     ['update: niveau de l appelant lu', /roles\(code, access_level\)/.test(update)],
     ['update: niveau de la cible lu', /roles\(access_level\)/.test(update)],
-    ['update: cible trop haute refusee', /targetLevel > guard\.level/.test(update)],
+    ['update: pair refuse depuis 029 (niveau egal interdit)', /userId !== guard\.callerId && targetLevel >= guard\.level/.test(update)],
     ['update: role sur-eleve refuse', /role\.access_level \?\? 0\) > guard\.level/.test(update)],
     ['update: auto-changement de role refuse', /roleId !== target\.role_id[\s\S]{0,80}votre propre r/.test(update)],
     ['create: niveau de l appelant lu', /roles\(code, access_level\)/.test(create)],

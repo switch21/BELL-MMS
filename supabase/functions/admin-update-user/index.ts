@@ -35,6 +35,7 @@ interface ProfileRow {
   job_title: string | null;
   role_id: string | null;
   is_active: boolean;
+  is_system?: boolean;
   updated_at: string;
   role?: { access_level: number } | null;
 }
@@ -156,12 +157,20 @@ Deno.serve(async (req) => {
 
   const { data: target, error: targetError } = await admin
     .from('profiles')
-    .select('id, first_name, last_name, phone, job_title, role_id, is_active, updated_at, role:roles(access_level)')
+    .select('id, first_name, last_name, phone, job_title, role_id, is_active, is_system, updated_at, role:roles(access_level)')
     .eq('id', userId)
     .maybeSingle<ProfileRow>();
 
   if (targetError) return json({ error: 'Impossible de lire le profil cible.' }, 500);
   if (!target) return json({ error: 'Profil utilisateur introuvable.' }, 404);
+
+  // Le compte racine (029) est invisible dans la liste des utilisateurs. La lecture ci-dessus se
+  // fait avec la clé service_role, qui franchit la RLS : sans ce contrôle, deviner l'uuid d'un
+  // compte racine le rendrait visible par un message de protection. Il répond donc exactement ce
+  // que répond un compte absent.
+  if (target.is_system === true && userId !== guard.callerId) {
+    return json({ error: 'Profil utilisateur introuvable.' }, 404);
+  }
 
   const { data: role, error: roleError } = await admin
     .from('roles')
@@ -172,16 +181,21 @@ Deno.serve(async (req) => {
   if (roleError) return json({ error: 'Impossible de vérifier le rôle.' }, 500);
   if (!role) return json({ error: 'Rôle introuvable.' }, 400);
 
-  // Hiérarchie (027) : ces trois contrôles rendent le message lisible avant toute écriture.
+  // Hiérarchie (027, durcie par 029) : ces contrôles rendent le message lisible avant toute écriture.
   // L'écriture, elle, se fait sous le jeton de l'appelant, donc la politique « Gestion des profils
-  // par les administrateurs » la borne à son tour : son USING porte sur la ligne ancienne (un
-  // compte de niveau supérieur devient invisible, l'UPDATE rend 0 ligne), son WITH CHECK porte sur
-  // la ligne nouvelle (un rôle de niveau supérieur lève 42501). Les deux couches doivent rester
-  // d'accord : un « aucune ligne modifiée » alors que le niveau est suffisant signale un désaccord
-  // entre elles, pas un profil absent.
+  // par les administrateurs » la borne à son tour : son USING porte sur la ligne ancienne (un pair
+  // de niveau égal devient invisible, l'UPDATE rend 0 ligne), son WITH CHECK porte sur la ligne
+  // nouvelle (un rôle de niveau supérieur lève 42501). Les deux couches doivent rester d'accord :
+  // un « aucune ligne modifiée » alors que le niveau est suffisant signale un désaccord entre
+  // elles, pas un profil absent.
+  // 029 a retourné le premier test : un pair n'est plus une cible. La modification de son propre
+  // compte reste permise, c'est la politique personnelle qui la porte.
   const targetLevel = target.role?.access_level ?? 0;
-  if (targetLevel > guard.level) {
-    return json({ error: 'Vous ne pouvez pas modifier un compte de niveau supérieur au vôtre.' }, 403);
+  if (userId !== guard.callerId && targetLevel >= guard.level) {
+    return json(
+      { error: 'Vous ne pouvez pas modifier un compte de niveau égal ou supérieur au vôtre.' },
+      403
+    );
   }
   if ((role.access_level ?? 0) > guard.level) {
     return json({ error: 'Vous ne pouvez pas attribuer un rôle de niveau supérieur au vôtre.' }, 403);

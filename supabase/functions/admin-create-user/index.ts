@@ -142,6 +142,9 @@ Deno.serve(async (req) => {
 
   if (roleError) return json({ error: 'Impossible de vérifier le rôle.' }, 500);
   if (!role) return json({ error: 'Rôle introuvable.' }, 400);
+  // 029 durcit la cible, pas l'attribution : un compte peut encore créer un pair de son propre
+  // niveau, sinon le compte racine ne pourrait plus jamais désigner un second super_admin.
+  // L'insertion ci-dessous ne porte jamais is_system, et la politique refuse la valeur vraie.
   if ((role.access_level ?? 0) > guard.level) {
     return json({ error: 'Vous ne pouvez pas attribuer un rôle de niveau supérieur au vôtre.' }, 403);
   }

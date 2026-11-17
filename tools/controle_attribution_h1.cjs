@@ -195,16 +195,17 @@ function juger() {
   // 12. La garde de niveau en code survit : H1 ajoute une couche, il ne retire pas le message
   //     lisible qui precede l'ecrite (refus 403 avant tout essai).
   const refus = [
-    ['admin-update-user', /targetLevel > guard\.level/, 'cible au-dessus'],
+    ['admin-update-user', /userId !== guard\.callerId && targetLevel >= guard\.level/, 'cible au-dessus ou egale (029)'],
+    ['admin-update-user', /target\.is_system === true && userId !== guard\.callerId/, 'ligne racine rendue introuvable (029)'],
     ['admin-update-user', /\(role\.access_level \?\? 0\) > guard\.level/, 'role au-dessus'],
     ['admin-update-user', /userId === guard\.callerId && roleId !== target\.role_id/, 'auto-changement de role'],
     ['admin-create-user', /\(role\.access_level \?\? 0\) > guard\.level/, 'role au-dessus'],
   ];
   const manquants = refus.filter(([nom, re]) => !(nom === 'admin-create-user' ? c : u).match(re)).map(([_, ___, lib]) => lib);
   if (manquants.length === 0) {
-    ok('garde de niveau en code', 'les 4 refus de niveau precedent toujours l ecrite', '4/4 presents');
+    ok('garde de niveau en code', refus.length + ' refus de niveau precedent toujours l ecrite', refus.length + '/' + refus.length + ' presents');
   } else {
-    ko('garde de niveau en code', 'les 4 refus de niveau precedent toujours l ecrite', 'manquant(s) : ' + manquants.join(', '));
+    ko('garde de niveau en code', refus.length + ' refus de niveau precedent toujours l ecrite', 'manquant(s) : ' + manquants.join(', '));
   }
 
   // 13. Le journal reste tenu par le trigger seul (voie H2 refusee) : une fonction qui insererait
