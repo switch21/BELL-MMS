@@ -100,7 +100,8 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) {
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
     return json({ error: 'Configuration serveur incomplète.' }, 500);
   }
 
@@ -108,8 +109,18 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const guard = await checkCallerCanManageUsers(admin, req.headers.get('Authorization') ?? '');
+  const authorization = req.headers.get('Authorization') ?? '';
+  const guard = await checkCallerCanManageUsers(admin, authorization);
   if (guard.error) return json({ error: guard.error }, 403);
+
+  // Les écritures profiles partent du jeton de l'appelant et non de la clé service : le trigger
+  // d'audit prend son acteur dans auth.uid() (003:13), et auth.uid() est NULL pour la clé service,
+  // donc le journal ne disait pas qui avait modifié le compte. Le même jeton rend en plus la
+  // politique 027 opposable à l'écriture, indépendamment des contrôles ci-dessous.
+  const asCaller = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: authorization } },
+  });
 
   let payload: UpdateUserPayload;
   try {
@@ -161,8 +172,13 @@ Deno.serve(async (req) => {
   if (roleError) return json({ error: 'Impossible de vérifier le rôle.' }, 500);
   if (!role) return json({ error: 'Rôle introuvable.' }, 400);
 
-  // Hierarchie (027) : la RLS ne sert pas ici, la fonction ecrit avec la cle service_role qui
-  // la franchit. Sans ces trois controles, le trou (a) du depot survivrait malgre 027.
+  // Hiérarchie (027) : ces trois contrôles rendent le message lisible avant toute écriture.
+  // L'écriture, elle, se fait sous le jeton de l'appelant, donc la politique « Gestion des profils
+  // par les administrateurs » la borne à son tour : son USING porte sur la ligne ancienne (un
+  // compte de niveau supérieur devient invisible, l'UPDATE rend 0 ligne), son WITH CHECK porte sur
+  // la ligne nouvelle (un rôle de niveau supérieur lève 42501). Les deux couches doivent rester
+  // d'accord : un « aucune ligne modifiée » alors que le niveau est suffisant signale un désaccord
+  // entre elles, pas un profil absent.
   const targetLevel = target.role?.access_level ?? 0;
   if (targetLevel > guard.level) {
     return json({ error: 'Vous ne pouvez pas modifier un compte de niveau supérieur au vôtre.' }, 403);
@@ -175,7 +191,7 @@ Deno.serve(async (req) => {
   }
 
   const restoreProfile = async () => {
-    const { error: rollbackError } = await admin
+    const { error: rollbackError } = await asCaller
       .from('profiles')
       .update({
         first_name: target.first_name,
@@ -191,7 +207,7 @@ Deno.serve(async (req) => {
     return rollbackError ? rollbackError.message : null;
   };
 
-  const { data: updated, error: updateError } = await admin
+  const { data: updated, error: updateError } = await asCaller
     .from('profiles')
     .update({
       first_name: firstName,
@@ -207,7 +223,13 @@ Deno.serve(async (req) => {
 
   if (updateError) return json({ error: `Modification du profil impossible : ${updateError.message}` }, 500);
   if (!updated || updated.length === 0) {
-    return json({ error: 'Aucune ligne modifiée : le profil est introuvable.' }, 404);
+    return json(
+      {
+        error:
+          'Aucune ligne modifiée : la politique de sécurité ne rend pas ce profil inscriptible sous votre niveau, ou le compte a été supprimé pendant l’opération.',
+      },
+      404
+    );
   }
 
   const authActions: string[] = [];
